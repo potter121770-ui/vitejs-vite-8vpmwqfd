@@ -47,14 +47,14 @@ interface ProcessedMonthData extends MonthlyData {
 // --- 色彩配置 ---
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
-// --- 初始模擬資料 ---
+// --- 初始資料 (已清空，保留你的設定) ---
 const INITIAL_TRANSACTIONS: Transaction[] = [];
 
 const INITIAL_BUDGETS: Budgets = {};
 
 const INITIAL_STATS_DATA: StatsData = {
-  available: 0,
-  savings: 0,
+  available: 0, 
+  savings: 0,   
 };
 
 const CATEGORIES = [
@@ -64,10 +64,45 @@ const CATEGORIES = [
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   
+  // --- iOS App-Like Behavior Hook ---
+  useEffect(() => {
+    // 1. 強制設定 Meta Viewport 以禁止縮放
+    let meta = document.querySelector('meta[name="viewport"]');
+    if (!meta) {
+      meta = document.createElement('meta');
+      meta.name = 'viewport';
+      document.head.appendChild(meta);
+    }
+    meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+
+    // 2. 禁止 iOS Safari 的兩指縮放 (Gesture)
+    const preventGesture = (e: Event) => {
+      e.preventDefault();
+      // @ts-ignore
+      document.body.style.zoom = 0.99; // 這是個黑魔法，強制重繪防止縮放卡住
+    };
+
+    // 3. 禁止雙指縮放與橡皮筋效果
+    const preventTouch = (e: TouchEvent) => {
+      if (e.touches.length > 1) {
+        e.preventDefault();
+      }
+    };
+    
+    document.addEventListener('gesturestart', preventGesture);
+    document.addEventListener('touchmove', preventTouch, { passive: false });
+
+    return () => {
+      document.removeEventListener('gesturestart', preventGesture);
+      document.removeEventListener('touchmove', preventTouch);
+    };
+  }, []);
+
   // --- State Initialization ---
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
-      const saved = localStorage.getItem('yupao_transactions');
+      // 維持 _v2 版本以保持乾淨資料
+      const saved = localStorage.getItem('yupao_transactions_v2');
       return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
     } catch (e) {
       return INITIAL_TRANSACTIONS;
@@ -76,7 +111,7 @@ export default function App() {
   
   const [initialStats, setInitialStats] = useState<StatsData>(() => {
     try {
-      const saved = localStorage.getItem('yupao_stats');
+      const saved = localStorage.getItem('yupao_stats_v2');
       return saved ? JSON.parse(saved) : INITIAL_STATS_DATA;
     } catch (e) {
       return INITIAL_STATS_DATA;
@@ -85,7 +120,7 @@ export default function App() {
 
   const [budgets, setBudgets] = useState<Budgets>(() => {
     try {
-      const saved = localStorage.getItem('yupao_budgets');
+      const saved = localStorage.getItem('yupao_budgets_v2');
       return saved ? JSON.parse(saved) : INITIAL_BUDGETS;
     } catch (e) {
       return INITIAL_BUDGETS;
@@ -93,15 +128,15 @@ export default function App() {
   });
 
   useEffect(() => {
-    localStorage.setItem('yupao_transactions', JSON.stringify(transactions));
+    localStorage.setItem('yupao_transactions_v2', JSON.stringify(transactions));
   }, [transactions]);
 
   useEffect(() => {
-    localStorage.setItem('yupao_stats', JSON.stringify(initialStats));
+    localStorage.setItem('yupao_stats_v2', JSON.stringify(initialStats));
   }, [initialStats]);
 
   useEffect(() => {
-    localStorage.setItem('yupao_budgets', JSON.stringify(budgets));
+    localStorage.setItem('yupao_budgets_v2', JSON.stringify(budgets));
   }, [budgets]);
 
 
@@ -257,9 +292,9 @@ export default function App() {
       tag: 'need', 
       type: 'expense',
       isInstallment: false, 
-      installmentCount: 3,
+      installmentCount: 3,  
       installmentCalcType: 'total',
-      perMonthInput: ''
+      perMonthInput: '',
     });
     setActiveTab('form');
   };
@@ -431,11 +466,6 @@ export default function App() {
             <button onClick={() => setFormData({...formData, type: 'expense', category: '飲食'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition ${formData.type === 'expense' ? 'bg-red-100 text-red-600 ring-2 ring-red-200' : 'bg-gray-50 text-gray-400'}`}>支出</button>
             <button onClick={() => setFormData({...formData, type: 'income', category: '收入'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition ${formData.type === 'income' ? 'bg-green-100 text-green-600 ring-2 ring-green-200' : 'bg-gray-50 text-gray-400'}`}>收入</button>
           </div>
-
-          {/* FIX: 修正這裡的 Layout
-              原先是 grid-cols-2 (並排)，導致日期在手機上太擠。
-              現在改為 grid-cols-1 (垂直排列)，讓日期和金額各自佔據一行。
-          */}
           <div className="grid grid-cols-1 gap-4">
             <div>
               <label className="text-xs text-gray-500 mb-1 block font-medium">日期 (或首期繳款日)</label>
@@ -614,6 +644,7 @@ export default function App() {
              <div className="flex items-end gap-2">
                 <span className="text-3xl font-bold">Yu-Pao's Portfolio</span>
              </div>
+             {/* FIX: Added whitespace-nowrap to prevent date breaking */}
              <span className="text-xs font-bold bg-white/10 px-2 py-1 rounded text-blue-200 border border-white/10 whitespace-nowrap">{selectedMonth}</span>
           </div>
 
@@ -706,12 +737,13 @@ export default function App() {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.2 for Yu-Pao (Layout Fixed)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.5 for Yu-Pao (Native App Feel)</p></div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden relative">
+    // 加入 select-none touch-manipulation overscroll-none 來優化 App 手感
+    <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden relative select-none touch-manipulation overscroll-none">
        {deleteModal.show && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animation-fade-in">
            <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs transform transition-all scale-100">
