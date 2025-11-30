@@ -1,8 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Camera, ArrowRight, Save, Trash2, X, ChevronLeft, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save } from 'lucide-react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, 
-  LineChart, Line, PieChart as RePieChart, Pie, Cell 
+  ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
 
 // --- Type Definitions ---
@@ -61,7 +60,7 @@ const CATEGORIES = [
   '房租', '飲食', '交通', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療', '收入'
 ];
 
-export default function App() {
+export default function App(): JSX.Element {
   const [activeTab, setActiveTab] = useState('dashboard');
   
   // --- iOS App-Like Behavior Hook (強效版) ---
@@ -70,7 +69,6 @@ export default function App() {
     let meta = document.querySelector('meta[name="viewport"]');
     if (!meta) {
       meta = document.createElement('meta');
-      // FIX: 使用 setAttribute 替代直接賦值 .name 以解決 TypeScript 報錯 (Property 'name' does not exist on type 'Element')
       meta.setAttribute('name', 'viewport');
       document.head.appendChild(meta);
     }
@@ -78,12 +76,11 @@ export default function App() {
     meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content');
 
     // 2. 暴力禁止 iOS Safari 的縮放手勢 (Pinch)
-    // 這是最關鍵的一步，需設定 passive: false 才能呼叫 preventDefault
     const preventPinch = (e: Event) => {
       e.preventDefault();
     };
 
-    // 3. 禁止雙擊縮放 (雖然 CSS touch-action 已經處理，但 JS 雙重保險)
+    // 3. 禁止雙擊縮放
     let lastTouchEnd = 0;
     const preventDoubleTapZoom = (e: TouchEvent) => {
       const now = (new Date()).getTime();
@@ -94,7 +91,7 @@ export default function App() {
     };
 
     document.addEventListener('gesturestart', preventPinch, { passive: false });
-    // document.addEventListener('touchend', preventDoubleTapZoom, { passive: false }); // 註解掉：因為這可能會影響按鈕點擊的靈敏度，先靠 CSS touch-manipulation 處理
+    // document.addEventListener('touchend', preventDoubleTapZoom, { passive: false }); 
 
     return () => {
       document.removeEventListener('gesturestart', preventPinch);
@@ -275,12 +272,6 @@ export default function App() {
     return {
       dashboard: { ...currentData, pieData },
       investment: currentData,
-      chartData: sortedMonthsAsc.map(m => ({
-          name: m,
-          netIncome: processedMonthsData[m].netIncome,
-          savings: processedMonthsData[m].savings,
-          accumulatedDeficit: processedMonthsData[m].accumulatedDeficit
-      }))
     };
   }, [transactions, initialStats, selectedMonth, availableMonths]);
 
@@ -380,13 +371,11 @@ export default function App() {
       <div className="flex justify-between items-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
           <div className="flex items-center gap-2 text-gray-700 font-bold">
               <Calendar className="w-5 h-5 text-blue-600" />
-              {/* FIX: Prevent zooming on select by increasing font size */}
               <span className="text-base">{selectedMonth}</span>
           </div>
           <select 
             value={selectedMonth} 
             onChange={(e) => setSelectedMonth(e.target.value)}
-            // FIX: text-base (16px) prevents iOS zoom on focus
             className="bg-gray-50 border border-gray-200 text-gray-700 text-base rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none"
           >
             {availableMonths.map(m => ( <option key={m} value={m}>{m}</option> ))}
@@ -474,12 +463,10 @@ export default function App() {
           <div className="grid grid-cols-1 gap-4">
             <div>
               <label className="text-xs text-gray-500 mb-1 block font-medium">日期 (或首期繳款日)</label>
-              {/* FIX: text-base prevents input zoom */}
               <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500 font-medium" />
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block font-medium">金額 {formData.isInstallment && '(總額)'}</label>
-              {/* FIX: text-base prevents input zoom */}
               <input type="number" placeholder="0" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} className={`w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500 font-medium ${formData.installmentCalcType === 'monthly' && formData.isInstallment ? 'bg-gray-100 text-gray-500' : ''}`} readOnly={formData.installmentCalcType === 'monthly' && formData.isInstallment} />
             </div>
           </div>
@@ -521,7 +508,6 @@ export default function App() {
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="text-xs text-blue-600 mb-1 block font-bold">分期期數 (月)</label>
-                                {/* FIX: text-base */}
                                 <input 
                                     type="number" 
                                     min="2"
@@ -551,7 +537,6 @@ export default function App() {
                                         {formData.amount ? Math.floor(Number(formData.amount) / formData.installmentCount).toLocaleString() : 0}
                                     </div>
                                 ) : (
-                                    /* FIX: text-base */
                                     <input 
                                         type="number"
                                         placeholder="輸入每期"
@@ -576,7 +561,6 @@ export default function App() {
 
           <div>
             <label className="text-xs text-gray-500 mb-1 block font-medium">分類</label>
-            {/* FIX: text-base */}
             <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500">
               {formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資 (轉出)</option></>}
             </select>
@@ -587,7 +571,6 @@ export default function App() {
               <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer flex-1"><input type="radio" name="tag" checked={formData.tag === 'want'} onChange={() => setFormData({...formData, tag: 'want'})} className="w-4 h-4 text-blue-600" /><span className={formData.tag === 'want' ? 'font-bold text-blue-600' : ''}>想要 (Want)</span></label>
             </div>
           )}
-          {/* FIX: text-base */}
           <input type="text" placeholder="備註" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500" />
           <div className="flex gap-3 pt-2">
              {editingId && <button onClick={(e) => requestDelete(e, editingId)} className="flex-1 bg-red-50 text-red-500 py-3 rounded-xl font-bold hover:bg-red-100 transition flex items-center justify-center gap-2"><Trash2 className="w-5 h-5" /> 刪除</button>}
@@ -655,7 +638,6 @@ export default function App() {
              <div className="flex items-end gap-2">
                 <span className="text-3xl font-bold">Yu-Pao's Portfolio</span>
              </div>
-             {/* FIX: Added whitespace-nowrap to prevent date breaking */}
              <span className="text-xs font-bold bg-white/10 px-2 py-1 rounded text-blue-200 border border-white/10 whitespace-nowrap">{selectedMonth}</span>
           </div>
 
@@ -728,12 +710,10 @@ export default function App() {
         <div className="space-y-5">
            <div>
               <label className="text-sm font-bold text-gray-700 block mb-2">累積可加碼資金</label>
-              {/* FIX: text-base */}
               <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 text-base focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.available || ''} onChange={e => setInitialStats({...initialStats, available: Number(e.target.value)})} /></div>
            </div>
            <div>
               <label className="text-sm font-bold text-gray-700 block mb-2">現金累積存款</label>
-              {/* FIX: text-base */}
               <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 text-base focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.savings || ''} onChange={e => setInitialStats({...initialStats, savings: Number(e.target.value)})} /></div>
            </div>
         </div>
@@ -744,14 +724,52 @@ export default function App() {
             {CATEGORIES.filter(c => c !== '收入' && c !== '投資').map(cat => (
                <div key={cat} className="flex items-center gap-3">
                   <label className="w-20 text-sm font-medium text-gray-600">{cat}</label>
-                  {/* FIX: text-base */}
                   <div className="flex-1 relative"><input type="number" placeholder="無預算" className="w-full bg-gray-50 rounded-lg px-3 py-2 text-base font-bold text-gray-800 focus:outline-blue-500" value={budgets[cat] || ''} onChange={(e) => updateBudget(cat, e.target.value)} /></div>
                </div>
             ))}
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.6 for Yu-Pao (No Zoom + Larger Inputs)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.7 for Yu-Pao (Final Fix)</p></div>
+    </div>
+  );
+
+  return (
+    <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden relative select-none touch-manipulation overscroll-none">
+       {deleteModal.show && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animation-fade-in">
+           <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs transform transition-all scale-100">
+              <div className="flex flex-col items-center text-center mb-4"><div className="w-12 h-12 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-3"><AlertCircle className="w-6 h-6" /></div><h3 className="text-lg font-bold text-gray-900">確定要刪除嗎？</h3><p className="text-sm text-gray-500 mt-1">此動作無法復原。</p></div>
+              <div className="flex gap-3">
+                 <button onClick={() => setDeleteModal({ show: false, id: null })} className="flex-1 py-2.5 rounded-xl text-gray-700 font-bold bg-gray-100 hover:bg-gray-200 transition">取消</button>
+                 <button onClick={confirmDelete} className="flex-1 py-2.5 rounded-xl text-white font-bold bg-red-500 hover:bg-red-600 shadow-lg shadow-red-200 transition">刪除</button>
+              </div>
+           </div>
+        </div>
+       )}
+
+      <div className="bg-white px-6 pt-12 pb-4 sticky top-0 z-20 border-b border-gray-100">
+        <div className="flex justify-between items-center">
+          <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
+          <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border border-gray-200"><span className="text-lg">⚛️</span></div>
+        </div>
+      </div>
+
+      <div className="p-4 h-[calc(100vh-160px)] overflow-y-auto hide-scrollbar">
+        {activeTab === 'dashboard' && renderDashboardView()}
+        {activeTab === 'history' && renderHistoryView()}
+        {activeTab === 'form' && renderFormView()}
+        {activeTab === 'investment' && renderInvestmentView()}
+        {activeTab === 'settings' && renderSettingsView()}
+      </div>
+
+      <div className="absolute bottom-0 w-full bg-white border-t border-gray-200 px-6 py-4 flex justify-between items-center z-30">
+        <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'}`}><PieChart className="w-6 h-6" /><span className="text-[10px] font-medium">總覽</span></button>
+        <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'history' ? 'text-blue-600' : 'text-gray-400'}`}><List className="w-6 h-6" /><span className="text-[10px] font-medium">明細</span></button>
+        <div className="relative -top-6"><button onClick={openAddMode} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-300 hover:scale-105 transition ${activeTab === 'form' && !editingId ? 'bg-black' : 'bg-blue-600'}`}><Plus className={`w-8 h-8 transition-transform ${activeTab === 'form' && !editingId ? 'rotate-45' : ''}`} /></button></div>
+        <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'investment' ? 'text-blue-600' : 'text-gray-400'}`}><TrendingUp className="w-6 h-6" /><span className="text-[10px] font-medium">投資</span></button>
+        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'settings' ? 'text-blue-600' : 'text-gray-400'}`}><Settings className="w-6 h-6" /><span className="text-[10px] font-medium">設定</span></button>
+      </div>
     </div>
   );
 }
