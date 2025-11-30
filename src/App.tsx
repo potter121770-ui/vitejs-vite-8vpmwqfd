@@ -11,8 +11,8 @@ interface Transaction {
   category: string;
   amount: number;
   type: 'income' | 'expense';
+  tag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative'; // 擴展 tag 的定義
   note: string;
-  tag: string;
   groupId?: string;
 }
 
@@ -162,12 +162,14 @@ export default function App(): JSX.Element {
     category: '飲食',
     amount: '',
     note: '',
-    tag: 'need', 
+    tag: 'need' as 'need' | 'want' | 'income', 
     type: 'expense' as 'income' | 'expense',
     isInstallment: false, 
     installmentCount: 3,  
     installmentCalcType: 'total',
     perMonthInput: '',
+    // FIX: 新增投資資金來源選項
+    investSource: 'monthly' as 'monthly' | 'cumulative'
   });
   
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -189,8 +191,16 @@ export default function App(): JSX.Element {
       if (t.category === '收入') {
         monthlyRawData[monthKey].income += Number(t.amount);
       } else if (t.category === '投資') {
+         // 投資不論來源，都計入實際投入金額
          monthlyRawData[monthKey].actualInvested += Number(t.amount);
+         
+         // FIX: 只有標記為 'invest_monthly' 的投資才計入 expense (影響淨收支/下月額度)
+         if (t.tag === 'invest_monthly') {
+             monthlyRawData[monthKey].expense += Number(t.amount);
+         }
+         // 若是 'invest_cumulative' 則不計入 expense，直接從累積資金池中扣除 (這是 cumulativeInvestable 核心邏輯處理的)
       } else {
+        // 一般支出
         monthlyRawData[monthKey].expense += Number(t.amount);
         if (!monthlyRawData[monthKey].categoryMap[t.category]) monthlyRawData[monthKey].categoryMap[t.category] = 0;
         monthlyRawData[monthKey].categoryMap[t.category] += Number(t.amount);
@@ -238,6 +248,7 @@ export default function App(): JSX.Element {
 
       cumulativeSavings += currentMonthSavingsAddon;
       
+      // cumulativeInvestable 處理：這裡會把當月所有 actualInvested 扣掉
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
       
       carryOverBudget = surplusForNextMonth;
@@ -284,28 +295,35 @@ export default function App(): JSX.Element {
       amount: '', 
       note: '', 
       tag: 'need', 
-      type: 'expense' as 'income' | 'expense',
+      type: 'expense',
       isInstallment: false, 
       installmentCount: 3,  
       installmentCalcType: 'total',
       perMonthInput: '',
+      investSource: 'monthly' // 預設為當月
     });
     setActiveTab('form');
   };
 
   const openEditMode = (trans: Transaction) => {
     setEditingId(trans.id);
+    // 編輯時，如果是投資，根據 tag 判斷來源
+    const source = trans.category === '投資' 
+                   ? (trans.tag === 'invest_cumulative' ? 'cumulative' : 'monthly') 
+                   : 'monthly';
+
     setFormData({ 
       date: trans.date, 
       category: trans.category, 
       amount: trans.amount.toString(), 
       note: trans.note.replace(/\(\d+\/\d+\)$/, '').trim(), 
-      tag: trans.tag, 
+      tag: trans.tag as 'need' | 'want' | 'income', 
       type: trans.type,
       isInstallment: false, 
       installmentCount: 3,
       installmentCalcType: 'total',
-      perMonthInput: ''
+      perMonthInput: '',
+      investSource: source
     });
     setActiveTab('form');
   };
@@ -313,8 +331,18 @@ export default function App(): JSX.Element {
   const handleSave = () => {
     if (!formData.amount) return;
     
+    // 根據分類和來源決定最終的 tag
+    let finalTag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative';
+    if (formData.category === '收入') {
+      finalTag = 'income';
+    } else if (formData.category === '投資') {
+      finalTag = formData.investSource === 'cumulative' ? 'invest_cumulative' : 'invest_monthly';
+    } else {
+      finalTag = formData.tag;
+    }
+
     if (editingId) {
-      setTransactions(transactions.map(t => t.id === editingId ? { ...t, ...formData, amount: Number(formData.amount) } : t));
+      setTransactions(transactions.map(t => t.id === editingId ? { ...t, ...formData, tag: finalTag, amount: Number(formData.amount) } : t));
       setActiveTab('history');
       return;
     } 
@@ -342,12 +370,13 @@ export default function App(): JSX.Element {
              date: dateStr,
              amount: currentAmount,
              note: `${formData.note} (${i + 1}/${count})`,
-             groupId: `group_${baseId}`
+             groupId: `group_${baseId}`,
+             tag: finalTag, // 確保分期付款也繼承了正確的 tag
           });
        }
        setTransactions([...newTransactions, ...transactions]);
     } else {
-       const item: Transaction = { id: baseId, ...formData, amount: totalAmount };
+       const item: Transaction = { id: baseId, ...formData, tag: finalTag, amount: totalAmount };
        setTransactions([item, ...transactions]);
     }
     
@@ -457,8 +486,8 @@ export default function App(): JSX.Element {
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
         <div className="space-y-4">
           <div className="flex gap-2">
-            <button onClick={() => setFormData({...formData, type: 'expense', category: '飲食'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition ${formData.type === 'expense' ? 'bg-red-100 text-red-600 ring-2 ring-red-200' : 'bg-gray-50 text-gray-400'}`}>支出</button>
-            <button onClick={() => setFormData({...formData, type: 'income', category: '收入'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition ${formData.type === 'income' ? 'bg-green-100 text-green-600 ring-2 ring-green-200' : 'bg-gray-50 text-gray-400'}`}>收入</button>
+            <button onClick={() => setFormData({...formData, type: 'expense', category: '飲食', investSource: 'monthly'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition ${formData.type === 'expense' ? 'bg-red-100 text-red-600 ring-2 ring-red-200' : 'bg-gray-50 text-gray-400'}`}>支出</button>
+            <button onClick={() => setFormData({...formData, type: 'income', category: '收入', tag: 'income', investSource: 'monthly'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition ${formData.type === 'income' ? 'bg-green-100 text-green-600 ring-2 ring-green-200' : 'bg-gray-50 text-gray-400'}`}>收入</button>
           </div>
           <div className="grid grid-cols-1 gap-4">
             <div>
@@ -562,9 +591,45 @@ export default function App(): JSX.Element {
           <div>
             <label className="text-xs text-gray-500 mb-1 block font-medium">分類</label>
             <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500">
-              {formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資 (轉出)</option></>}
+              {/* 1. 移除 (轉出) */}
+              {formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資</option></>}
             </select>
           </div>
+          
+          {/* 投資資金來源選項 */}
+          {formData.type === 'expense' && formData.category === '投資' && (
+             <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 flex flex-col gap-2">
+                <p className="text-xs font-bold text-indigo-700">選擇資金來源</p>
+                <label className="flex items-center gap-3 text-sm text-gray-700 cursor-pointer">
+                    <input 
+                        type="radio" 
+                        name="investSource" 
+                        checked={formData.investSource === 'monthly'} 
+                        onChange={() => setFormData({...formData, investSource: 'monthly'})} 
+                        className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" 
+                    />
+                    <div className="flex flex-col">
+                        {/* 2. 修正名稱 */}
+                        <span className={formData.investSource === 'monthly' ? 'font-bold text-indigo-800' : ''}>當月新增可投資額度</span>
+                        <span className="text-xs text-gray-500">計入本月淨支出。</span>
+                    </div>
+                </label>
+                <label className="flex items-center gap-3 text-sm text-gray-700 cursor-pointer">
+                    <input 
+                        type="radio" 
+                        name="investSource" 
+                        checked={formData.investSource === 'cumulative'} 
+                        onChange={() => setFormData({...formData, investSource: 'cumulative'})} 
+                        className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" 
+                    />
+                    <div className="flex flex-col">
+                        <span className={formData.investSource === 'cumulative' ? 'font-bold text-indigo-800' : ''}>歷史累積加碼資金</span>
+                        <span className="text-xs text-gray-500">直接使用累積水庫資金，不影響本月淨支出。</span>
+                    </div>
+                </label>
+             </div>
+          )}
+
           {formData.type === 'expense' && formData.category !== '投資' && (
             <div className="bg-gray-50 p-3 rounded-xl flex gap-4">
               <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer flex-1"><input type="radio" name="tag" checked={formData.tag === 'need'} onChange={() => setFormData({...formData, tag: 'need'})} className="w-4 h-4 text-blue-600" /><span className={formData.tag === 'need' ? 'font-bold text-blue-600' : ''}>需要 (Need)</span></label>
@@ -615,7 +680,13 @@ export default function App(): JSX.Element {
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                         <p className={`font-bold text-lg ${t.type === 'income' ? 'text-green-600' : 'text-gray-800'}`}>{t.type === 'income' ? '+' : '-'}{t.amount.toLocaleString()}</p>
-                        {t.type === 'expense' && t.category !== '投資' && <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.tag === 'need' ? 'bg-gray-100 text-gray-500' : 'bg-yellow-100 text-yellow-600'}`}>{t.tag === 'need' ? '需要' : '想要'}</span>}
+                        {t.category === '投資' ? (
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.tag === 'invest_cumulative' ? 'bg-indigo-100 text-indigo-600' : 'bg-green-100 text-green-600'}`}>
+                            {t.tag === 'invest_cumulative' ? '累積金' : '當月'}
+                          </span>
+                        ) : (
+                          t.type === 'expense' && <span className={`text-[10px] px-2 py-0.5 rounded-full ${t.tag === 'need' ? 'bg-gray-100 text-gray-500' : 'bg-yellow-100 text-yellow-600'}`}>{t.tag === 'need' ? '需要' : '想要'}</span>
+                        )}
                     </div>
                     <button onClick={(e) => requestDelete(e, t.id)} className="p-3 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded-full transition"><Trash2 className="w-5 h-5" /></button>
                   </div>
@@ -630,8 +701,8 @@ export default function App(): JSX.Element {
   };
 
   const renderInvestmentView = () => (
-    <div className="space-y-6 relative">
-       <div className="bg-gray-900 p-6 rounded-3xl text-white shadow-lg relative overflow-hidden">
+    <div className="relative">
+       <div className="bg-gray-900 p-6 rounded-3xl text-white shadow-lg relative overflow-hidden mb-6">
         <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-500 rounded-full opacity-20 blur-3xl"></div>
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-6">
@@ -644,16 +715,10 @@ export default function App(): JSX.Element {
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-white/10 p-3 rounded-xl backdrop-blur-md">
               <div className="flex items-center gap-1 mb-1">
-                 <p className="text-xs text-gray-400">當月最大可投資金額 (90%)</p>
+                 <p className="text-xs text-gray-400">當月新增可投資額度 (90%盈餘)</p>
                  <Info className="w-3 h-3 text-gray-500 cursor-help" />
               </div>
               <p className="text-xl font-bold text-blue-300">${stats.investment.monthlyMaxInvestable.toLocaleString() || 0}</p>
-             
-              {stats.investment.monthlyMaxInvestable === 0 && (
-                  <p className="text-[10px] text-red-300 mt-1">
-                      (上月無盈餘或赤字未補完，本月暫停投資)
-                  </p>
-              )}
             </div>
             <div className="bg-white/10 p-3 rounded-xl backdrop-blur-md">
                <p className="text-xs text-gray-400 mb-1">當月實際投入金額</p>
@@ -664,21 +729,21 @@ export default function App(): JSX.Element {
           <div className="mt-4">
              <div className={`bg-white/20 p-4 rounded-xl backdrop-blur-md border ${stats.investment.monthlyRemainingInvestable < 0 ? 'border-red-400/50' : 'border-white/10'}`}>
                 <div className="flex justify-between items-center">
-                  <span className="text-sm text-gray-200 font-bold">當月剩餘可投資金額</span>
+                  <span className="text-sm text-gray-200 font-bold">當月新增加碼資金</span>
                   <span className={`text-2xl font-bold ${stats.investment.monthlyRemainingInvestable < 0 ? 'text-red-400' : 'text-yellow-400'}`}>
                      ${stats.investment.monthlyRemainingInvestable.toLocaleString() || 0}
                   </span>
                 </div>
                 <p className="text-[10px] text-gray-400 mt-1 text-right">
-                   公式：(上月淨盈餘 90%) - 本月實際投入
+                   公式：新增額度 - 本月實際投入
                 </p>
              </div>
           </div>
           
           <div className="mt-4 pt-4 border-t border-white/10 flex flex-col gap-1">
              <div className="flex justify-between items-center">
-                <span className="text-xs text-gray-500">歷史累積可加碼資金</span>
-                <span className="text-sm font-bold text-gray-400">${stats.investment.cumulativeAddOnAvailable.toLocaleString() || 0}</span>
+                <span className="text-sm text-gray-200 font-bold">歷史累積可加碼資金</span>
+                <span className="text-2xl font-bold text-gray-400">${stats.investment.cumulativeAddOnAvailable.toLocaleString() || 0}</span>
              </div>
              {stats.investment.accumulatedDeficit > 0 && (
                  <div className="flex justify-between items-center">
@@ -730,9 +795,22 @@ export default function App(): JSX.Element {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.4.1 for Yu-Pao (Safe Area Fixed)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.4.4 for Yu-Pao (Investment UI Refined)</p></div>
     </div>
   );
+
+  // 判斷哪些 Tab 需要捲動
+  // FIX: 將 'settings' 重新加入需要捲動的清單中
+  const needsScrolling = activeTab === 'dashboard' || activeTab === 'history' || activeTab === 'form' || activeTab === 'settings';
+  
+  // 設置 Content Area 的 class
+  const scrollContainerClasses = `
+    flex-1 relative p-4 
+    ${needsScrolling 
+        ? 'overflow-y-auto hide-scrollbar pb-32' // 需要捲動的 Tab 獲得 auto-scroll 和底部大留白
+        : 'overflow-hidden' // 內容短的 Tab (e.g., Investment) 鎖定捲動
+    }
+  `;
 
   return (
     // FIX: 使用 h-[100dvh] 確保在行動裝置上高度正確，解決被瀏覽器工具列遮擋的問題
@@ -753,22 +831,18 @@ export default function App(): JSX.Element {
       {/* 修正：使用 env(safe-area-inset-top) 自動適應劉海高度，並移除右側 Emoji */}
       <div className="flex-none bg-white px-6 pt-[calc(env(safe-area-inset-top)+20px)] pb-4 border-b border-gray-100 z-20">
         <div className="flex justify-between items-center">
-          <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都將離財務獨立更進一步</p></div>
+          <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
           {/* Emoji removed */}
         </div>
       </div>
 
-      {/* Content Area: Only content scrolls */}
-      {/* FIX: pb-32 大幅增加底部留白，確保最後一張卡片能滑到「+」按鈕上方而不被擋住 */}
-      <div className="flex-1 overflow-y-auto hide-scrollbar relative pb-32">
-        {/* 實際頁面內容 */}
-        <div className="p-4">
-          {activeTab === 'dashboard' && renderDashboardView()}
-          {activeTab === 'history' && renderHistoryView()}
-          {activeTab === 'form' && renderFormView()}
-          {activeTab === 'investment' && renderInvestmentView()}
-          {activeTab === 'settings' && renderSettingsView()}
-        </div>
+      {/* Content Area: Only content scrolls IF needed */}
+      <div className={scrollContainerClasses}>
+        {activeTab === 'dashboard' && renderDashboardView()}
+        {activeTab === 'history' && renderHistoryView()}
+        {activeTab === 'form' && renderFormView()}
+        {activeTab === 'investment' && renderInvestmentView()}
+        {activeTab === 'settings' && renderSettingsView()}
       </div>
 
       {/* Footer: Adapted with safe-area-inset-bottom */}
