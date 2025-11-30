@@ -626,7 +626,7 @@ export default function App() {
              <div className="flex items-end gap-2">
                 <span className="text-3xl font-bold">Yu-Pao's Portfolio</span>
              </div>
-             <span className="text-xs font-bold bg-white/10 px-2 py-1 rounded text-blue-200 border border-white/10">{selectedMonth}</span>
+             <span className="text-xs font-bold bg-white/10 px-2 py-1 rounded text-blue-200 border border-white/10 whitespace-nowrap">{selectedMonth}</span>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
