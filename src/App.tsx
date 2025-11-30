@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Camera, ArrowRight, Save, Trash2, X, ChevronLeft, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, RefreshCw, TrendingDown } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Camera, ArrowRight, Save, Trash2, X, ChevronLeft, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, 
   LineChart, Line, PieChart as RePieChart, Pie, Cell 
@@ -8,7 +8,7 @@ import {
 // --- 色彩配置 ---
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
-// --- 初始模擬資料 ---
+// --- 初始模擬資料 (當沒有存檔時使用) ---
 const INITIAL_TRANSACTIONS = [
   { id: 1, date: '2025-11-01', category: '飲食', amount: 150, type: 'expense', note: '午餐', tag: 'need' },
   { id: 2, date: '2025-11-02', category: '交通', amount: 1200, type: 'expense', note: 'TPASS', tag: 'need' },
@@ -17,32 +17,74 @@ const INITIAL_TRANSACTIONS = [
   { id: 5, date: '2025-11-15', category: '投資', amount: 5000, type: 'expense', note: '定期定額', tag: 'invest_actual' },
 ];
 
+const INITIAL_BUDGETS = {
+  '飲食': 6000,
+  '娛樂': 2000,
+  '旅遊': 0, 
+  '交通': 1500,
+  '生活雜費': 2000
+};
+
+const INITIAL_STATS_DATA = {
+  available: 30000, // 累積可加碼資金
+  savings: 10000,   // 現金累積存款
+};
+
 const CATEGORIES = [
   '房租', '飲食', '交通', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療', '收入'
 ];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [transactions, setTransactions] = useState(INITIAL_TRANSACTIONS);
   
-  // 初始資產設定
-  const [initialStats, setInitialStats] = useState({
-    available: 30000, 
-    savings: 10000,   
+  // --- 改造重點 1: 初始化時優先從 localStorage 讀取資料 ---
+  const [transactions, setTransactions] = useState(() => {
+    try {
+      const saved = localStorage.getItem('yupao_transactions');
+      return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
+    } catch (e) {
+      return INITIAL_TRANSACTIONS;
+    }
+  });
+  
+  const [initialStats, setInitialStats] = useState(() => {
+    try {
+      const saved = localStorage.getItem('yupao_stats');
+      return saved ? JSON.parse(saved) : INITIAL_STATS_DATA;
+    } catch (e) {
+      return INITIAL_STATS_DATA;
+    }
   });
 
-  // 預算設定
-  const [budgets, setBudgets] = useState<{ [key: string]: number }>({
-    '飲食': 6000,
-    '娛樂': 2000,
-    '旅遊': 0, 
-    '交通': 1500,
-    '生活雜費': 2000
+  const [budgets, setBudgets] = useState(() => {
+    try {
+      const saved = localStorage.getItem('yupao_budgets');
+      return saved ? JSON.parse(saved) : INITIAL_BUDGETS;
+    } catch (e) {
+      return INITIAL_BUDGETS;
+    }
   });
 
-  const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
+  // --- 改造重點 2: 當資料變動時，自動存回 localStorage ---
+  useEffect(() => {
+    localStorage.setItem('yupao_transactions', JSON.stringify(transactions));
+  }, [transactions]);
+
+  useEffect(() => {
+    localStorage.setItem('yupao_stats', JSON.stringify(initialStats));
+  }, [initialStats]);
+
+  useEffect(() => {
+    localStorage.setItem('yupao_budgets', JSON.stringify(budgets));
+  }, [budgets]);
+
+
+  const [deleteModal, setDeleteModal] = useState({ show: false, id: null });
+
+  // 當前選中的月份
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
 
+  // 取得所有有資料的月份清單
   const availableMonths = useMemo(() => {
     const months = new Set(transactions.map(t => t.date.substring(0, 7)));
     months.add(new Date().toISOString().substring(0, 7));
@@ -55,6 +97,7 @@ export default function App() {
     }
   }, [availableMonths, selectedMonth]);
 
+  // 表單狀態
   const [formData, setFormData] = useState({
     date: new Date().toISOString().split('T')[0],
     category: '飲食',
@@ -68,16 +111,21 @@ export default function App() {
     perMonthInput: '',
   });
   
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState(null);
 
-  // --- 核心邏輯計算 ---
+  // --- 核心邏輯計算 (T+1 投資額度) ---
   const stats = useMemo(() => {
-    let monthlyRawData: any = {};
-    availableMonths.forEach(m => { monthlyRawData[m] = { income: 0, expense: 0, actualInvested: 0, categoryMap: {} }; });
+    let monthlyRawData = {};
+    
+    availableMonths.forEach(m => {
+        monthlyRawData[m] = { income: 0, expense: 0, actualInvested: 0, categoryMap: {} };
+    });
 
     transactions.forEach(t => {
       const monthKey = t.date.substring(0, 7);
-      if (!monthlyRawData[monthKey]) monthlyRawData[monthKey] = { income: 0, expense: 0, actualInvested: 0, categoryMap: {} };
+      if (!monthlyRawData[monthKey]) {
+          monthlyRawData[monthKey] = { income: 0, expense: 0, actualInvested: 0, categoryMap: {} };
+      }
 
       if (t.category === '收入') {
         monthlyRawData[monthKey].income += Number(t.amount);
@@ -91,17 +139,25 @@ export default function App() {
     });
 
     const sortedMonthsAsc = Object.keys(monthlyRawData).sort(); 
+    
     let accumulatedDeficit = 0;
+    // 從初始設定開始累積
     let cumulativeInvestable = initialStats.available; 
     let cumulativeSavings = initialStats.savings;
+    
+    // T+1 邏輯：本月預算來自上月盈餘
     let carryOverBudget = 0; 
-    let processedMonthsData: any = {};
+
+    let processedMonthsData = {};
 
     sortedMonthsAsc.forEach(month => {
       const { income, expense, actualInvested, categoryMap } = monthlyRawData[month];
       const netIncome = income - expense;
       
+      // 1. 本月的「最大可投資金額」= 上個月結算後產生的預算
       let monthlyMaxInvestable = carryOverBudget;
+
+      // 2. 結算本月，決定「下個月的預算」
       let surplusForNextMonth = 0; 
       let currentMonthSavingsAddon = 0; 
       let deficitDeducted = 0; 
@@ -111,61 +167,111 @@ export default function App() {
            deficitDeducted = accumulatedDeficit;
            let realSurplus = netIncome - accumulatedDeficit;
            accumulatedDeficit = 0; 
+            
            surplusForNextMonth = realSurplus * 0.9;
            currentMonthSavingsAddon = realSurplus * 0.1;
         } else {
            deficitDeducted = netIncome;
            accumulatedDeficit -= netIncome;
+           surplusForNextMonth = 0;
+           currentMonthSavingsAddon = 0; 
         }
       } else {
         accumulatedDeficit += Math.abs(netIncome);
+        surplusForNextMonth = 0;
+        currentMonthSavingsAddon = 0;
       }
 
       cumulativeSavings += currentMonthSavingsAddon;
+      
+      // 累積可加碼資金 = (上期剩餘) + (本月獲得的額度 - 本月實際打掉的子彈)
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
+      
       carryOverBudget = surplusForNextMonth;
 
       processedMonthsData[month] = {
-          income, expense, netIncome, categoryMap, actualInvested,
+          income,
+          expense,
+          netIncome,
+          categoryMap,
+          actualInvested,
           monthlyMaxInvestable,
           monthlyRemainingInvestable: monthlyMaxInvestable - actualInvested,
           cumulativeAddOnAvailable: cumulativeInvestable,
-          deficitDeducted, accumulatedDeficit, savings: cumulativeSavings,
+          deficitDeducted, 
+          accumulatedDeficit, 
+          savings: cumulativeSavings,
+          budgetSource: monthlyMaxInvestable > 0 ? 'based_on_prev_surplus' : 'prev_month_deficit_or_zero'
       };
     });
 
     const currentData = processedMonthsData[selectedMonth] || {
         income: 0, expense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0,
         monthlyMaxInvestable: 0, monthlyRemainingInvestable: 0, cumulativeAddOnAvailable: cumulativeInvestable,
-        deficitDeducted: 0, accumulatedDeficit: 0, savings: cumulativeSavings
+        deficitDeducted: 0, accumulatedDeficit: 0, savings: cumulativeSavings, budgetSource: 'no_data'
     };
 
     const pieData = Object.keys(currentData.categoryMap).map(key => ({
-      name: key, value: currentData.categoryMap[key]
+      name: key,
+      value: currentData.categoryMap[key]
     }));
 
-    return { dashboard: { ...currentData, pieData }, investment: currentData };
+    return {
+      dashboard: { ...currentData, pieData },
+      investment: currentData,
+      chartData: sortedMonthsAsc.map(m => ({
+          name: m,
+          netIncome: processedMonthsData[m].netIncome,
+          savings: processedMonthsData[m].savings,
+          accumulatedDeficit: processedMonthsData[m].accumulatedDeficit
+      }))
+    };
   }, [transactions, initialStats, selectedMonth, availableMonths]);
 
   // --- 操作功能 ---
   const openAddMode = () => {
     setEditingId(null);
-    setFormData({ date: new Date().toISOString().split('T')[0], category: '飲食', amount: '', note: '', tag: 'need', type: 'expense', isInstallment: false, installmentCount: 3, installmentCalcType: 'total', perMonthInput: '' });
+    setFormData({ 
+      date: new Date().toISOString().split('T')[0], 
+      category: '飲食', 
+      amount: '', 
+      note: '', 
+      tag: 'need', 
+      type: 'expense',
+      isInstallment: false,
+      installmentCount: 3,
+      installmentCalcType: 'total',
+      perMonthInput: ''
+    });
     setActiveTab('form');
   };
 
-  const openEditMode = (trans: any) => {
+  const openEditMode = (trans) => {
     setEditingId(trans.id);
-    setFormData({ date: trans.date, category: trans.category, amount: trans.amount, note: trans.note.replace(/\(\d+\/\d+\)$/, '').trim(), tag: trans.tag, type: trans.type, isInstallment: false, installmentCount: 3, installmentCalcType: 'total', perMonthInput: '' });
+    setFormData({ 
+      date: trans.date, 
+      category: trans.category, 
+      amount: trans.amount, 
+      note: trans.note.replace(/\(\d+\/\d+\)$/, '').trim(), 
+      tag: trans.tag, 
+      type: trans.type,
+      isInstallment: false, 
+      installmentCount: 3,
+      installmentCalcType: 'total',
+      perMonthInput: ''
+    });
     setActiveTab('form');
   };
 
   const handleSave = () => {
     if (!formData.amount) return;
+    
     if (editingId) {
       setTransactions(transactions.map(t => t.id === editingId ? { ...t, ...formData, amount: Number(formData.amount) } : t));
-      setActiveTab('history'); return;
+      setActiveTab('history');
+      return;
     } 
+    
     const baseId = transactions.length > 0 ? Math.max(...transactions.map(t => t.id)) + 1 : 1;
     const totalAmount = Number(formData.amount);
     
@@ -176,23 +282,32 @@ export default function App() {
        const remainder = totalAmount - (perMonthAmount * count);
        const startDate = new Date(formData.date);
        const startDay = startDate.getDate();
-       
+        
        for (let i = 0; i < count; i++) {
           const currentAmount = i === 0 ? perMonthAmount + remainder : perMonthAmount; 
           const nextDate = new Date(startDate.getFullYear(), startDate.getMonth() + i, startDay);
           if (nextDate.getDate() !== startDay) nextDate.setDate(0); 
           const dateStr = nextDate.toISOString().split('T')[0];
-          newTransactions.push({ id: baseId + i, ...formData, date: dateStr, amount: currentAmount, note: `${formData.note} (${i + 1}/${count})` });
+          
+          newTransactions.push({
+             id: baseId + i,
+             ...formData,
+             date: dateStr,
+             amount: currentAmount,
+             note: `${formData.note} (${i + 1}/${count})`,
+             groupId: `group_${baseId}`
+          });
        }
        setTransactions([...newTransactions, ...transactions]);
     } else {
        const item = { id: baseId, ...formData, amount: totalAmount };
        setTransactions([item, ...transactions]);
     }
+    
     setActiveTab('history');
   };
 
-  const requestDelete = (e: any, id: number) => { e.stopPropagation(); setDeleteModal({ show: true, id }); };
+  const requestDelete = (e, id) => { e.stopPropagation(); setDeleteModal({ show: true, id }); };
   const confirmDelete = () => {
     if (deleteModal.id) {
       setTransactions(transactions.filter(t => t.id !== deleteModal.id));
@@ -200,9 +315,10 @@ export default function App() {
     }
     setDeleteModal({ show: false, id: null });
   };
-  const updateBudget = (category: string, value: string) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
+  const updateBudget = (category, value) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
 
   // --- Render Functions ---
+
   const renderDashboardView = () => (
     <div className="space-y-6 pb-20">
       <div className="flex justify-between items-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
@@ -210,50 +326,77 @@ export default function App() {
               <Calendar className="w-5 h-5 text-blue-600" />
               <span>{selectedMonth}</span>
           </div>
-          <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none">
-             {availableMonths.map(m => ( <option key={m} value={m}>{m}</option> ))}
+          <select 
+            value={selectedMonth} 
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none"
+          >
+            {availableMonths.map(m => ( <option key={m} value={m}>{m}</option> ))}
           </select>
       </div>
+
       <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-6 rounded-3xl text-white shadow-lg">
         <div className="flex justify-between items-center mb-4">
-          <div><h2 className="text-sm opacity-80">{selectedMonth} 淨收支</h2><p className="text-3xl font-bold">NT$ {stats.dashboard.netIncome.toLocaleString()}</p></div>
+          <div>
+            <h2 className="text-sm opacity-80">{selectedMonth} 淨收支</h2>
+            <p className="text-3xl font-bold">NT$ {stats.dashboard.netIncome.toLocaleString()}</p>
+          </div>
           <Wallet className="w-8 h-8 opacity-80" />
         </div>
         <div className="grid grid-cols-2 gap-4 mt-4 bg-white/10 p-4 rounded-xl backdrop-blur-sm">
-          <div><p className="text-xs opacity-70">總收入</p><p className="font-semibold text-green-300">+{stats.dashboard.income.toLocaleString()}</p></div>
-          <div><p className="text-xs opacity-70">總支出</p><p className="font-semibold text-red-300">-{stats.dashboard.expense.toLocaleString()}</p></div>
+          <div>
+            <p className="text-xs opacity-70">總收入</p>
+            <p className="font-semibold text-green-300">+{stats.dashboard.income.toLocaleString()}</p>
+          </div>
+          <div>
+            <p className="text-xs opacity-70">總支出</p>
+            <p className="font-semibold text-red-300">-{stats.dashboard.expense.toLocaleString()}</p>
+          </div>
         </div>
       </div>
+
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
         <div className="flex justify-between items-center mb-4">
-           <h3 className="font-bold text-gray-800 flex items-center"><PieChart className="w-5 h-5 mr-2 text-blue-500" /> 預算執行狀況</h3>
+           <h3 className="font-bold text-gray-800 flex items-center">
+             <PieChart className="w-5 h-5 mr-2 text-blue-500" />
+             預算執行狀況
+           </h3>
            <button onClick={() => setActiveTab('settings')} className="text-xs text-blue-600 font-medium">調整預算</button>
         </div>
+        
         {Object.entries(budgets).filter(([_, budget]) => budget > 0).map(([cat, budget]) => {
           const currentMonthTransactions = transactions.filter(t => t.date.startsWith(selectedMonth));
           const spent = currentMonthTransactions.filter(t => t.category === cat).reduce((sum, t) => sum + Number(t.amount), 0);
           const percent = Math.min((spent / budget) * 100, 100);
           return (
             <div key={cat} className="mb-4 last:mb-0">
-              <div className="flex justify-between text-sm mb-1"><span className="text-gray-600">{cat}</span><span className="text-gray-500">{spent.toLocaleString()} / {budget.toLocaleString()}</span></div>
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className={`h-full rounded-full ${percent > 90 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div></div>
+              <div className="flex justify-between text-sm mb-1">
+                <span className="text-gray-600">{cat}</span>
+                <span className="text-gray-500">{spent.toLocaleString()} / {budget.toLocaleString()}</span>
+              </div>
+              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                <div className={`h-full rounded-full ${percent > 90 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
+              </div>
             </div>
           );
         })}
         {Object.values(budgets).every(b => b === 0) && <p className="text-sm text-gray-400 text-center py-2">所有預算皆未設定，請至設定頁面新增</p>}
       </div>
+
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 h-80">
         <h3 className="font-bold text-gray-800 mb-2">支出分類佔比 ({selectedMonth})</h3>
         {stats.dashboard.pieData.length > 0 ? (
             <ResponsiveContainer width="100%" height="100%">
             <RePieChart>
                 <Pie data={stats.dashboard.pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={80} paddingAngle={5} dataKey="value" label={({name, value}) => `${name} $${value}`}>
-                {stats.dashboard.pieData.map((entry: any, index: number) => ( <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} /> ))}
+                {stats.dashboard.pieData.map((entry, index) => ( <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} /> ))}
                 </Pie>
                 <RechartsTooltip />
             </RePieChart>
             </ResponsiveContainer>
-        ) : ( <div className="h-full flex items-center justify-center text-gray-400 text-sm">本月尚無支出紀錄</div> )}
+        ) : (
+            <div className="h-full flex items-center justify-center text-gray-400 text-sm">本月尚無支出紀錄</div>
+        )}
       </div>
     </div>
   );
@@ -280,32 +423,100 @@ export default function App() {
               <input type="number" placeholder="0" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} className={`w-full bg-gray-50 rounded-xl p-3 text-sm focus:outline-blue-500 font-medium ${formData.installmentCalcType === 'monthly' && formData.isInstallment ? 'bg-gray-100 text-gray-500' : ''}`} readOnly={formData.installmentCalcType === 'monthly' && formData.isInstallment} />
             </div>
           </div>
+           
+          {/* 分期付款開關 */}
           {formData.type === 'expense' && formData.category !== '投資' && !editingId && (
               <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 transition-all">
                  <label className="flex items-center justify-between cursor-pointer mb-2">
-                    <div className="flex items-center gap-2"><CreditCard className="w-5 h-5 text-blue-600" /><span className="font-bold text-blue-800 text-sm">分期付款自動生成</span></div>
+                    <div className="flex items-center gap-2">
+                        <CreditCard className="w-5 h-5 text-blue-600" />
+                        <span className="font-bold text-blue-800 text-sm">分期付款自動生成</span>
+                    </div>
                     <div className="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" className="sr-only peer" checked={formData.isInstallment} onChange={(e) => setFormData({...formData, isInstallment: e.target.checked})} />
                         <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
                     </div>
                  </label>
+                  
                  {formData.isInstallment && (
                     <div className="animate-in slide-in-from-top-2 pt-2 border-t border-blue-200">
                         <div className="flex bg-blue-100/50 rounded-lg p-1 mb-3">
-                            <button onClick={() => setFormData(prev => ({ ...prev, installmentCalcType: 'total' }))} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${formData.installmentCalcType === 'total' ? 'bg-white text-blue-600 shadow-sm' : 'text-blue-400 hover:text-blue-500'}`}>輸入總額 (算每期)</button>
-                            <button onClick={() => { const currentPerMonth = formData.amount && formData.installmentCount ? Math.floor(Number(formData.amount) / formData.installmentCount).toString() : ''; setFormData(prev => ({ ...prev, installmentCalcType: 'monthly', perMonthInput: currentPerMonth })); }} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${formData.installmentCalcType === 'monthly' ? 'bg-white text-blue-600 shadow-sm' : 'text-blue-400 hover:text-blue-500'}`}>輸入每期 (算總額)</button>
+                            <button 
+                                onClick={() => setFormData(prev => ({ ...prev, installmentCalcType: 'total' }))}
+                                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${formData.installmentCalcType === 'total' ? 'bg-white text-blue-600 shadow-sm' : 'text-blue-400 hover:text-blue-500'}`}
+                            >
+                                輸入總額 (算每期)
+                            </button>
+                            <button 
+                                onClick={() => {
+                                    const currentPerMonth = formData.amount && formData.installmentCount ? Math.floor(Number(formData.amount) / formData.installmentCount) : '';
+                                    setFormData(prev => ({ ...prev, installmentCalcType: 'monthly', perMonthInput: currentPerMonth }));
+                                }}
+                                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${formData.installmentCalcType === 'monthly' ? 'bg-white text-blue-600 shadow-sm' : 'text-blue-400 hover:text-blue-500'}`}
+                            >
+                                輸入每期 (算總額)
+                            </button>
                         </div>
+
                         <div className="grid grid-cols-2 gap-4">
-                            <div><label className="text-xs text-blue-600 mb-1 block font-bold">分期期數 (月)</label><input type="number" min="2" max="36" value={formData.installmentCount} onChange={e => { const count = Number(e.target.value); if (formData.installmentCalcType === 'monthly' && formData.perMonthInput) { setFormData({ ...formData, installmentCount: count, amount: (Number(formData.perMonthInput) * count).toString() }); } else { setFormData({...formData, installmentCount: count}); } }} className="w-full bg-white border border-blue-200 rounded-lg p-2 text-sm text-center font-bold text-blue-800 focus:outline-blue-500" /></div>
-                            <div><label className="text-xs text-blue-600 mb-1 block font-bold">每期金額</label>{formData.installmentCalcType === 'total' ? (<div className="w-full bg-blue-100 rounded-lg p-2 text-sm text-center font-bold text-blue-800 flex items-center justify-center h-[38px]"><Calculator className="w-3 h-3 mr-1 opacity-50" />{formData.amount ? Math.floor(Number(formData.amount) / formData.installmentCount).toLocaleString() : 0}</div>) : (<input type="number" placeholder="輸入每期" value={formData.perMonthInput} onChange={e => { const val = e.target.value; setFormData({ ...formData, perMonthInput: val, amount: val ? (Number(val) * formData.installmentCount).toString() : '' }); }} className="w-full bg-white border border-blue-200 rounded-lg p-2 text-sm text-center font-bold text-blue-800 focus:outline-blue-500" />)}</div>
+                            <div>
+                                <label className="text-xs text-blue-600 mb-1 block font-bold">分期期數 (月)</label>
+                                <input 
+                                    type="number" 
+                                    min="2"
+                                    max="36"
+                                    value={formData.installmentCount} 
+                                    onChange={e => {
+                                        const count = Number(e.target.value);
+                                        if (formData.installmentCalcType === 'monthly' && formData.perMonthInput) {
+                                            setFormData({
+                                                ...formData,
+                                                installmentCount: count,
+                                                amount: Number(formData.perMonthInput) * count
+                                            });
+                                        } else {
+                                            setFormData({...formData, installmentCount: count});
+                                        }
+                                    }} 
+                                    className="w-full bg-white border border-blue-200 rounded-lg p-2 text-sm text-center font-bold text-blue-800 focus:outline-blue-500" 
+                                />
+                            </div>
+                            
+                            <div>
+                                <label className="text-xs text-blue-600 mb-1 block font-bold">每期金額</label>
+                                {formData.installmentCalcType === 'total' ? (
+                                    <div className="w-full bg-blue-100 rounded-lg p-2 text-sm text-center font-bold text-blue-800 flex items-center justify-center h-[38px]">
+                                        <Calculator className="w-3 h-3 mr-1 opacity-50" />
+                                        {formData.amount ? Math.floor(Number(formData.amount) / formData.installmentCount).toLocaleString() : 0}
+                                    </div>
+                                ) : (
+                                    <input 
+                                        type="number"
+                                        placeholder="輸入每期"
+                                        value={formData.perMonthInput}
+                                        onChange={e => {
+                                            const val = e.target.value;
+                                            setFormData({
+                                                ...formData,
+                                                perMonthInput: val,
+                                                amount: val ? Number(val) * formData.installmentCount : '' 
+                                            });
+                                        }}
+                                        className="w-full bg-white border border-blue-200 rounded-lg p-2 text-sm text-center font-bold text-blue-800 focus:outline-blue-500"
+                                    />
+                                )}
+                            </div>
                         </div>
                     </div>
                  )}
               </div>
           )}
+
           <div>
             <label className="text-xs text-gray-500 mb-1 block font-medium">分類</label>
-            <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-sm focus:outline-blue-500">{formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資 (轉出)</option></>}</select>
+            <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-sm focus:outline-blue-500">
+              {formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資 (轉出)</option></>}
+            </select>
           </div>
           {formData.type === 'expense' && formData.category !== '投資' && (
             <div className="bg-gray-50 p-3 rounded-xl flex gap-4">
@@ -325,7 +536,7 @@ export default function App() {
 
   const renderHistoryView = () => {
     const groupedTransactions = transactions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .reduce((groups: any, t) => {
+      .reduce((groups, t) => {
         const date = new Date(t.date);
         const key = `${date.getFullYear()}年${date.getMonth() + 1}月`;
         if (!groups[key]) groups[key] = [];
@@ -335,18 +546,24 @@ export default function App() {
 
     return (
       <div className="space-y-6 pb-20">
-        <div className="flex justify-between items-end px-2"><h3 className="font-bold text-2xl text-gray-800">歷史紀錄</h3><p className="text-xs text-gray-400 mb-1">共 {transactions.length} 筆</p></div>
-        {Object.entries(groupedTransactions).map(([groupName, groupItems]: [string, any]) => (
+        <div className="flex justify-between items-end px-2">
+          <h3 className="font-bold text-2xl text-gray-800">歷史紀錄</h3>
+          <p className="text-xs text-gray-400 mb-1">共 {transactions.length} 筆</p>
+        </div>
+        {Object.entries(groupedTransactions).map(([groupName, groupItems]) => (
           <div key={groupName} className="space-y-2">
             <h4 className="text-sm font-bold text-gray-500 pl-2 bg-gray-100 py-1 rounded-lg inline-block">{groupName}</h4>
             <div className="space-y-3">
-              {groupItems.map((t: any) => (
+              {groupItems.map(t => (
                 <div key={t.id} onClick={() => openEditMode(t)} className="bg-white p-4 rounded-xl border border-gray-100 flex justify-between items-center active:scale-[0.98] transition cursor-pointer hover:shadow-md group">
                   <div className="flex items-center gap-3 overflow-hidden">
                     <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center ${t.type === 'income' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
                       {t.category === '投資' ? <TrendingUp className="w-6 h-6" /> : <DollarSign className="w-6 h-6" />}
                     </div>
-                    <div className="min-w-0"><p className="font-bold text-gray-800 text-base truncate">{t.category}</p><p className="text-xs text-gray-400 truncate">{t.date} • {t.note || '無備註'}</p></div>
+                    <div className="min-w-0">
+                      <p className="font-bold text-gray-800 text-base truncate">{t.category}</p>
+                      <p className="text-xs text-gray-400 truncate">{t.date} • {t.note || '無備註'}</p>
+                    </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-right">
@@ -371,35 +588,69 @@ export default function App() {
         <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-500 rounded-full opacity-20 blur-3xl"></div>
         <div className="relative z-10">
           <div className="flex justify-between items-start mb-6">
-             <div className="flex items-end gap-2"><span className="text-3xl font-bold">Yu-Pao's Portfolio</span></div>
+             <div className="flex items-end gap-2">
+                <span className="text-3xl font-bold">Yu-Pao's Portfolio</span>
+             </div>
              <span className="text-xs font-bold bg-white/10 px-2 py-1 rounded text-blue-200 border border-white/10">{selectedMonth}</span>
           </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-white/10 p-3 rounded-xl backdrop-blur-md">
-              <div className="flex items-center gap-1 mb-1"><p className="text-xs text-gray-400">當月最大可投資金額 (90%)</p><Info className="w-3 h-3 text-gray-500 cursor-help" /></div>
+              <div className="flex items-center gap-1 mb-1">
+                 <p className="text-xs text-gray-400">當月最大可投資金額 (90%)</p>
+                 <Info className="w-3 h-3 text-gray-500 cursor-help" />
+              </div>
               <p className="text-xl font-bold text-blue-300">${stats.investment.monthlyMaxInvestable.toLocaleString() || 0}</p>
-              {stats.investment.monthlyMaxInvestable === 0 && (<p className="text-[10px] text-red-300 mt-1">* 上月無盈餘或需補赤字</p>)}
+             
+              {stats.investment.monthlyMaxInvestable === 0 && (
+                  <p className="text-[10px] text-red-300 mt-1">
+                      (上月無盈餘或赤字未補完，本月暫停投資)
+                  </p>
+              )}
             </div>
-            <div className="bg-white/10 p-3 rounded-xl backdrop-blur-md"><p className="text-xs text-gray-400 mb-1">當月實際投入金額</p><p className="text-xl font-bold text-green-300">${stats.investment.actualInvested.toLocaleString() || 0}</p></div>
+            <div className="bg-white/10 p-3 rounded-xl backdrop-blur-md">
+               <p className="text-xs text-gray-400 mb-1">當月實際投入金額</p>
+               <p className="text-xl font-bold text-green-300">${stats.investment.actualInvested.toLocaleString() || 0}</p>
+            </div>
           </div>
+
           <div className="mt-4">
              <div className={`bg-white/20 p-4 rounded-xl backdrop-blur-md border ${stats.investment.monthlyRemainingInvestable < 0 ? 'border-red-400/50' : 'border-white/10'}`}>
                 <div className="flex justify-between items-center">
                   <span className="text-sm text-gray-200 font-bold">當月剩餘可投資金額</span>
-                  <span className={`text-2xl font-bold ${stats.investment.monthlyRemainingInvestable < 0 ? 'text-red-400' : 'text-yellow-400'}`}>${stats.investment.monthlyRemainingInvestable.toLocaleString() || 0}</span>
+                  <span className={`text-2xl font-bold ${stats.investment.monthlyRemainingInvestable < 0 ? 'text-red-400' : 'text-yellow-400'}`}>
+                     ${stats.investment.monthlyRemainingInvestable.toLocaleString() || 0}
+                  </span>
                 </div>
-                <p className="text-[10px] text-gray-400 mt-1 text-right">公式：(上月淨盈餘 90%) - 本月實際投入</p>
+                <p className="text-[10px] text-gray-400 mt-1 text-right">
+                   公式：(上月淨盈餘 90%) - 本月實際投入
+                </p>
              </div>
           </div>
+          
           <div className="mt-4 pt-4 border-t border-white/10 flex flex-col gap-1">
-             <div className="flex justify-between items-center"><span className="text-xs text-gray-500">歷史累積可加碼資金</span><span className="text-sm font-bold text-gray-400">${stats.investment.cumulativeAddOnAvailable.toLocaleString() || 0}</span></div>
-             {stats.investment.accumulatedDeficit > 0 && (<div className="flex justify-between items-center"><span className="text-xs text-red-400">目前累積未補赤字</span><span className="text-sm font-bold text-red-400">-${stats.investment.accumulatedDeficit.toLocaleString()}</span></div>)}
+             <div className="flex justify-between items-center">
+                <span className="text-xs text-gray-500">歷史累積可加碼資金</span>
+                <span className="text-sm font-bold text-gray-400">${stats.investment.cumulativeAddOnAvailable.toLocaleString() || 0}</span>
+             </div>
+             {stats.investment.accumulatedDeficit > 0 && (
+                 <div className="flex justify-between items-center">
+                    <span className="text-xs text-red-400">目前累積未補赤字</span>
+                    <span className="text-sm font-bold text-red-400">-${stats.investment.accumulatedDeficit.toLocaleString()}</span>
+                 </div>
+             )}
           </div>
         </div>
       </div>
+       
       <div className="bg-orange-50 p-4 rounded-xl border border-orange-100">
-        <h4 className="font-bold text-orange-800 mb-2 flex items-center gap-2"><Coins className="w-4 h-4" /> 現金累積存款 (10% 儲蓄)</h4>
-        <div className="flex justify-between items-center bg-white p-3 rounded-lg shadow-sm"><span className="text-sm text-gray-500">目前累積</span><span className="font-bold text-gray-800">${stats.investment.savings.toLocaleString()}</span></div>
+        <h4 className="font-bold text-orange-800 mb-2 flex items-center gap-2">
+          <Coins className="w-4 h-4" /> 現金累積存款 (10% 儲蓄)
+        </h4>
+        <div className="flex justify-between items-center bg-white p-3 rounded-lg shadow-sm">
+          <span className="text-sm text-gray-500">目前累積</span>
+          <span className="font-bold text-gray-800">${stats.investment.savings.toLocaleString()}</span>
+        </div>
       </div>
     </div>
   );
@@ -410,8 +661,14 @@ export default function App() {
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
         <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><Settings className="w-5 h-5 text-gray-600" /> 初始資產配置</h4>
         <div className="space-y-5">
-           <div><label className="text-sm font-bold text-gray-700 block mb-2">累積可加碼資金</label><div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.available || ''} onChange={e => setInitialStats({...initialStats, available: Number(e.target.value)})} /></div></div>
-           <div><label className="text-sm font-bold text-gray-700 block mb-2">現金累積存款</label><div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.savings || ''} onChange={e => setInitialStats({...initialStats, savings: Number(e.target.value)})} /></div></div>
+           <div>
+              <label className="text-sm font-bold text-gray-700 block mb-2">累積可加碼資金</label>
+              <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.available || ''} onChange={e => setInitialStats({...initialStats, available: Number(e.target.value)})} /></div>
+           </div>
+           <div>
+              <label className="text-sm font-bold text-gray-700 block mb-2">現金累積存款</label>
+              <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.savings || ''} onChange={e => setInitialStats({...initialStats, savings: Number(e.target.value)})} /></div>
+           </div>
         </div>
       </div>
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
@@ -426,13 +683,12 @@ export default function App() {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.2.1 for Yu-Pao (Layout Fixed)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.0 for Yu-Pao (LocalStorage Edition)</p></div>
     </div>
   );
 
   return (
-    <div className="h-screen w-full bg-gray-50 flex flex-col font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden relative">
-       {/* Modal */}
+    <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden relative">
        {deleteModal.show && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animation-fade-in">
            <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs transform transition-all scale-100">
@@ -443,18 +699,16 @@ export default function App() {
               </div>
            </div>
         </div>
-     )}
+       )}
 
-      {/* Header */}
-      <div className="flex-none bg-white px-6 pt-12 pb-4 z-20 border-b border-gray-100">
+      <div className="bg-white px-6 pt-12 pb-4 sticky top-0 z-20 border-b border-gray-100">
         <div className="flex justify-between items-center">
           <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
           <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border border-gray-200"><span className="text-lg">⚛️</span></div>
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 overflow-y-auto p-4 hide-scrollbar">
+      <div className="p-4 h-[calc(100vh-160px)] overflow-y-auto hide-scrollbar">
         {activeTab === 'dashboard' && renderDashboardView()}
         {activeTab === 'history' && renderHistoryView()}
         {activeTab === 'form' && renderFormView()}
@@ -462,8 +716,7 @@ export default function App() {
         {activeTab === 'settings' && renderSettingsView()}
       </div>
 
-      {/* Bottom Navigation */}
-      <div className="flex-none bg-white border-t border-gray-200 px-6 py-4 flex justify-between items-center z-30">
+      <div className="absolute bottom-0 w-full bg-white border-t border-gray-200 px-6 py-4 flex justify-between items-center z-30">
         <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'}`}><PieChart className="w-6 h-6" /><span className="text-[10px] font-medium">總覽</span></button>
         <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'history' ? 'text-blue-600' : 'text-gray-400'}`}><List className="w-6 h-6" /><span className="text-[10px] font-medium">明細</span></button>
         <div className="relative -top-6"><button onClick={openAddMode} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-300 hover:scale-105 transition ${activeTab === 'form' && !editingId ? 'bg-black' : 'bg-blue-600'}`}><Plus className={`w-8 h-8 transition-transform ${activeTab === 'form' && !editingId ? 'rotate-45' : ''}`} /></button></div>
