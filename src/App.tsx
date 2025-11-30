@@ -48,25 +48,13 @@ interface ProcessedMonthData extends MonthlyData {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
 // --- 初始模擬資料 ---
-const INITIAL_TRANSACTIONS: Transaction[] = [
-  { id: 1, date: '2025-11-01', category: '飲食', amount: 150, type: 'expense', note: '午餐', tag: 'need' },
-  { id: 2, date: '2025-11-02', category: '交通', amount: 1200, type: 'expense', note: 'TPASS', tag: 'need' },
-  { id: 3, date: '2025-11-05', category: '娛樂', amount: 450, type: 'expense', note: 'Netflix', tag: 'want' },
-  { id: 4, date: '2025-11-10', category: '收入', amount: 25000, type: 'income', note: '實驗室薪水', tag: 'income' },
-  { id: 5, date: '2025-11-15', category: '投資', amount: 5000, type: 'expense', note: '定期定額', tag: 'invest_actual' },
-];
+const INITIAL_TRANSACTIONS: Transaction[] = [];
 
-const INITIAL_BUDGETS: Budgets = {
-  '飲食': 6000,
-  '娛樂': 2000,
-  '旅遊': 0, 
-  '交通': 1500,
-  '生活雜費': 2000
-};
+const INITIAL_BUDGETS: Budgets = {};
 
 const INITIAL_STATS_DATA: StatsData = {
-  available: 30000, // 累積可加碼資金
-  savings: 10000,   // 現金累積存款
+  available: 0,
+  savings: 0,
 };
 
 const CATEGORIES = [
