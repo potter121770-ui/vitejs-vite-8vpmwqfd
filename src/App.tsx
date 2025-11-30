@@ -5,11 +5,50 @@ import {
   LineChart, Line, PieChart as RePieChart, Pie, Cell 
 } from 'recharts';
 
+// --- Type Definitions (新增型別定義) ---
+interface Transaction {
+  id: number;
+  date: string;
+  category: string;
+  amount: number;
+  type: 'income' | 'expense';
+  note: string;
+  tag: string;
+  groupId?: string;
+}
+
+interface Budgets {
+  [key: string]: number;
+}
+
+interface StatsData {
+  available: number;
+  savings: number;
+}
+
+interface MonthlyData {
+  income: number;
+  expense: number;
+  actualInvested: number;
+  categoryMap: { [key: string]: number };
+}
+
+interface ProcessedMonthData extends MonthlyData {
+  netIncome: number;
+  monthlyMaxInvestable: number;
+  monthlyRemainingInvestable: number;
+  cumulativeAddOnAvailable: number;
+  deficitDeducted: number;
+  accumulatedDeficit: number;
+  savings: number;
+  budgetSource: string;
+}
+
 // --- 色彩配置 ---
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
-// --- 初始模擬資料 (當沒有存檔時使用) ---
-const INITIAL_TRANSACTIONS = [
+// --- 初始模擬資料 ---
+const INITIAL_TRANSACTIONS: Transaction[] = [
   { id: 1, date: '2025-11-01', category: '飲食', amount: 150, type: 'expense', note: '午餐', tag: 'need' },
   { id: 2, date: '2025-11-02', category: '交通', amount: 1200, type: 'expense', note: 'TPASS', tag: 'need' },
   { id: 3, date: '2025-11-05', category: '娛樂', amount: 450, type: 'expense', note: 'Netflix', tag: 'want' },
@@ -17,7 +56,7 @@ const INITIAL_TRANSACTIONS = [
   { id: 5, date: '2025-11-15', category: '投資', amount: 5000, type: 'expense', note: '定期定額', tag: 'invest_actual' },
 ];
 
-const INITIAL_BUDGETS = {
+const INITIAL_BUDGETS: Budgets = {
   '飲食': 6000,
   '娛樂': 2000,
   '旅遊': 0, 
@@ -25,7 +64,7 @@ const INITIAL_BUDGETS = {
   '生活雜費': 2000
 };
 
-const INITIAL_STATS_DATA = {
+const INITIAL_STATS_DATA: StatsData = {
   available: 30000, // 累積可加碼資金
   savings: 10000,   // 現金累積存款
 };
@@ -37,8 +76,8 @@ const CATEGORIES = [
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   
-  // --- 改造重點 1: 初始化時優先從 localStorage 讀取資料 ---
-  const [transactions, setTransactions] = useState(() => {
+  // --- State Initialization with Generics (加上型別宣告) ---
+  const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
       const saved = localStorage.getItem('yupao_transactions');
       return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
@@ -47,7 +86,7 @@ export default function App() {
     }
   });
   
-  const [initialStats, setInitialStats] = useState(() => {
+  const [initialStats, setInitialStats] = useState<StatsData>(() => {
     try {
       const saved = localStorage.getItem('yupao_stats');
       return saved ? JSON.parse(saved) : INITIAL_STATS_DATA;
@@ -56,7 +95,7 @@ export default function App() {
     }
   });
 
-  const [budgets, setBudgets] = useState(() => {
+  const [budgets, setBudgets] = useState<Budgets>(() => {
     try {
       const saved = localStorage.getItem('yupao_budgets');
       return saved ? JSON.parse(saved) : INITIAL_BUDGETS;
@@ -65,7 +104,6 @@ export default function App() {
     }
   });
 
-  // --- 改造重點 2: 當資料變動時，自動存回 localStorage ---
   useEffect(() => {
     localStorage.setItem('yupao_transactions', JSON.stringify(transactions));
   }, [transactions]);
@@ -79,12 +117,10 @@ export default function App() {
   }, [budgets]);
 
 
-  const [deleteModal, setDeleteModal] = useState({ show: false, id: null });
+  const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
 
-  // 當前選中的月份
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
 
-  // 取得所有有資料的月份清單
   const availableMonths = useMemo(() => {
     const months = new Set(transactions.map(t => t.date.substring(0, 7)));
     months.add(new Date().toISOString().substring(0, 7));
@@ -104,18 +140,18 @@ export default function App() {
     amount: '',
     note: '',
     tag: 'need', 
-    type: 'expense',
+    type: 'expense' as 'income' | 'expense',
     isInstallment: false, 
     installmentCount: 3,  
     installmentCalcType: 'total',
     perMonthInput: '',
   });
   
-  const [editingId, setEditingId] = useState(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
-  // --- 核心邏輯計算 (T+1 投資額度) ---
+  // --- 核心邏輯計算 ---
   const stats = useMemo(() => {
-    let monthlyRawData = {};
+    let monthlyRawData: { [key: string]: MonthlyData } = {};
     
     availableMonths.forEach(m => {
         monthlyRawData[m] = { income: 0, expense: 0, actualInvested: 0, categoryMap: {} };
@@ -141,23 +177,18 @@ export default function App() {
     const sortedMonthsAsc = Object.keys(monthlyRawData).sort(); 
     
     let accumulatedDeficit = 0;
-    // 從初始設定開始累積
     let cumulativeInvestable = initialStats.available; 
     let cumulativeSavings = initialStats.savings;
-    
-    // T+1 邏輯：本月預算來自上月盈餘
     let carryOverBudget = 0; 
 
-    let processedMonthsData = {};
+    let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     sortedMonthsAsc.forEach(month => {
       const { income, expense, actualInvested, categoryMap } = monthlyRawData[month];
       const netIncome = income - expense;
       
-      // 1. 本月的「最大可投資金額」= 上個月結算後產生的預算
       let monthlyMaxInvestable = carryOverBudget;
 
-      // 2. 結算本月，決定「下個月的預算」
       let surplusForNextMonth = 0; 
       let currentMonthSavingsAddon = 0; 
       let deficitDeducted = 0; 
@@ -184,7 +215,6 @@ export default function App() {
 
       cumulativeSavings += currentMonthSavingsAddon;
       
-      // 累積可加碼資金 = (上期剩餘) + (本月獲得的額度 - 本月實際打掉的子彈)
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
       
       carryOverBudget = surplusForNextMonth;
@@ -246,12 +276,12 @@ export default function App() {
     setActiveTab('form');
   };
 
-  const openEditMode = (trans) => {
+  const openEditMode = (trans: Transaction) => {
     setEditingId(trans.id);
     setFormData({ 
       date: trans.date, 
       category: trans.category, 
-      amount: trans.amount, 
+      amount: trans.amount.toString(), 
       note: trans.note.replace(/\(\d+\/\d+\)$/, '').trim(), 
       tag: trans.tag, 
       type: trans.type,
@@ -276,7 +306,7 @@ export default function App() {
     const totalAmount = Number(formData.amount);
     
     if (formData.isInstallment && formData.type === 'expense' && formData.category !== '投資' && formData.installmentCount > 1) {
-       const newTransactions = [];
+       const newTransactions: Transaction[] = [];
        const count = Math.round(formData.installmentCount);
        const perMonthAmount = Math.floor(totalAmount / count);
        const remainder = totalAmount - (perMonthAmount * count);
@@ -300,14 +330,14 @@ export default function App() {
        }
        setTransactions([...newTransactions, ...transactions]);
     } else {
-       const item = { id: baseId, ...formData, amount: totalAmount };
+       const item: Transaction = { id: baseId, ...formData, amount: totalAmount };
        setTransactions([item, ...transactions]);
     }
     
     setActiveTab('history');
   };
 
-  const requestDelete = (e, id) => { e.stopPropagation(); setDeleteModal({ show: true, id }); };
+  const requestDelete = (e: React.MouseEvent, id: number) => { e.stopPropagation(); setDeleteModal({ show: true, id }); };
   const confirmDelete = () => {
     if (deleteModal.id) {
       setTransactions(transactions.filter(t => t.id !== deleteModal.id));
@@ -315,7 +345,7 @@ export default function App() {
     }
     setDeleteModal({ show: false, id: null });
   };
-  const updateBudget = (category, value) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
+  const updateBudget = (category: string, value: string) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
 
   // --- Render Functions ---
 
@@ -450,7 +480,7 @@ export default function App() {
                             <button 
                                 onClick={() => {
                                     const currentPerMonth = formData.amount && formData.installmentCount ? Math.floor(Number(formData.amount) / formData.installmentCount) : '';
-                                    setFormData(prev => ({ ...prev, installmentCalcType: 'monthly', perMonthInput: currentPerMonth }));
+                                    setFormData(prev => ({ ...prev, installmentCalcType: 'monthly', perMonthInput: currentPerMonth.toString() }));
                                 }}
                                 className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${formData.installmentCalcType === 'monthly' ? 'bg-white text-blue-600 shadow-sm' : 'text-blue-400 hover:text-blue-500'}`}
                             >
@@ -472,7 +502,7 @@ export default function App() {
                                             setFormData({
                                                 ...formData,
                                                 installmentCount: count,
-                                                amount: Number(formData.perMonthInput) * count
+                                                amount: (Number(formData.perMonthInput) * count).toString()
                                             });
                                         } else {
                                             setFormData({...formData, installmentCount: count});
@@ -499,7 +529,7 @@ export default function App() {
                                             setFormData({
                                                 ...formData,
                                                 perMonthInput: val,
-                                                amount: val ? Number(val) * formData.installmentCount : '' 
+                                                amount: val ? (Number(val) * formData.installmentCount).toString() : '' 
                                             });
                                         }}
                                         className="w-full bg-white border border-blue-200 rounded-lg p-2 text-sm text-center font-bold text-blue-800 focus:outline-blue-500"
@@ -542,7 +572,7 @@ export default function App() {
         if (!groups[key]) groups[key] = [];
         groups[key].push(t);
         return groups;
-      }, {});
+      }, {} as { [key: string]: Transaction[] });
 
     return (
       <div className="space-y-6 pb-20">
@@ -683,7 +713,7 @@ export default function App() {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.0 for Yu-Pao (LocalStorage Edition)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.1 for Yu-Pao (TypeScript Fixed)</p></div>
     </div>
   );
 
