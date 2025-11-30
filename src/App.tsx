@@ -64,44 +64,46 @@ const CATEGORIES = [
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   
-  // --- iOS App-Like Behavior Hook ---
+  // --- iOS App-Like Behavior Hook (強效版) ---
   useEffect(() => {
-    // 1. 強制設定 Meta Viewport 以禁止縮放
+    // 1. 強制設定 Meta Viewport
     let meta = document.querySelector('meta[name="viewport"]');
     if (!meta) {
       meta = document.createElement('meta');
       meta.name = 'viewport';
       document.head.appendChild(meta);
     }
-    meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover');
+    // 加入 interactive-widget=resizes-content 防止鍵盤把畫面頂上去導致跑版
+    meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content');
 
-    // 2. 禁止 iOS Safari 的兩指縮放 (Gesture)
-    const preventGesture = (e: Event) => {
+    // 2. 暴力禁止 iOS Safari 的縮放手勢 (Pinch)
+    // 這是最關鍵的一步，需設定 passive: false 才能呼叫 preventDefault
+    const preventPinch = (e: Event) => {
       e.preventDefault();
-      // @ts-ignore
-      document.body.style.zoom = 0.99; // 這是個黑魔法，強制重繪防止縮放卡住
     };
 
-    // 3. 禁止雙指縮放與橡皮筋效果
-    const preventTouch = (e: TouchEvent) => {
-      if (e.touches.length > 1) {
+    // 3. 禁止雙擊縮放 (雖然 CSS touch-action 已經處理，但 JS 雙重保險)
+    let lastTouchEnd = 0;
+    const preventDoubleTapZoom = (e: TouchEvent) => {
+      const now = (new Date()).getTime();
+      if (now - lastTouchEnd <= 300) {
         e.preventDefault();
       }
+      lastTouchEnd = now;
     };
-    
-    document.addEventListener('gesturestart', preventGesture);
-    document.addEventListener('touchmove', preventTouch, { passive: false });
+
+    document.addEventListener('gesturestart', preventPinch, { passive: false });
+    // document.addEventListener('touchend', preventDoubleTapZoom, { passive: false }); // 註解掉：因為這可能會影響按鈕點擊的靈敏度，先靠 CSS touch-manipulation 處理
 
     return () => {
-      document.removeEventListener('gesturestart', preventGesture);
-      document.removeEventListener('touchmove', preventTouch);
+      document.removeEventListener('gesturestart', preventPinch);
+      // document.removeEventListener('touchend', preventDoubleTapZoom);
     };
   }, []);
 
   // --- State Initialization ---
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
-      // 維持 _v2 版本以保持乾淨資料
       const saved = localStorage.getItem('yupao_transactions_v2');
       return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
     } catch (e) {
@@ -290,7 +292,7 @@ export default function App() {
       amount: '', 
       note: '', 
       tag: 'need', 
-      type: 'expense',
+      type: 'expense' as 'income' | 'expense',
       isInstallment: false, 
       installmentCount: 3,  
       installmentCalcType: 'total',
@@ -377,12 +379,14 @@ export default function App() {
       <div className="flex justify-between items-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
           <div className="flex items-center gap-2 text-gray-700 font-bold">
               <Calendar className="w-5 h-5 text-blue-600" />
-              <span>{selectedMonth}</span>
+              {/* FIX: Prevent zooming on select by increasing font size */}
+              <span className="text-base">{selectedMonth}</span>
           </div>
           <select 
             value={selectedMonth} 
             onChange={(e) => setSelectedMonth(e.target.value)}
-            className="bg-gray-50 border border-gray-200 text-gray-700 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none"
+            // FIX: text-base (16px) prevents iOS zoom on focus
+            className="bg-gray-50 border border-gray-200 text-gray-700 text-base rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none"
           >
             {availableMonths.map(m => ( <option key={m} value={m}>{m}</option> ))}
           </select>
@@ -469,11 +473,13 @@ export default function App() {
           <div className="grid grid-cols-1 gap-4">
             <div>
               <label className="text-xs text-gray-500 mb-1 block font-medium">日期 (或首期繳款日)</label>
-              <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-sm focus:outline-blue-500 font-medium" />
+              {/* FIX: text-base prevents input zoom */}
+              <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500 font-medium" />
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block font-medium">金額 {formData.isInstallment && '(總額)'}</label>
-              <input type="number" placeholder="0" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} className={`w-full bg-gray-50 rounded-xl p-3 text-sm focus:outline-blue-500 font-medium ${formData.installmentCalcType === 'monthly' && formData.isInstallment ? 'bg-gray-100 text-gray-500' : ''}`} readOnly={formData.installmentCalcType === 'monthly' && formData.isInstallment} />
+              {/* FIX: text-base prevents input zoom */}
+              <input type="number" placeholder="0" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} className={`w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500 font-medium ${formData.installmentCalcType === 'monthly' && formData.isInstallment ? 'bg-gray-100 text-gray-500' : ''}`} readOnly={formData.installmentCalcType === 'monthly' && formData.isInstallment} />
             </div>
           </div>
            
@@ -514,6 +520,7 @@ export default function App() {
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label className="text-xs text-blue-600 mb-1 block font-bold">分期期數 (月)</label>
+                                {/* FIX: text-base */}
                                 <input 
                                     type="number" 
                                     min="2"
@@ -531,7 +538,7 @@ export default function App() {
                                             setFormData({...formData, installmentCount: count});
                                         }
                                     }} 
-                                    className="w-full bg-white border border-blue-200 rounded-lg p-2 text-sm text-center font-bold text-blue-800 focus:outline-blue-500" 
+                                    className="w-full bg-white border border-blue-200 rounded-lg p-2 text-base text-center font-bold text-blue-800 focus:outline-blue-500" 
                                 />
                             </div>
                             
@@ -543,6 +550,7 @@ export default function App() {
                                         {formData.amount ? Math.floor(Number(formData.amount) / formData.installmentCount).toLocaleString() : 0}
                                     </div>
                                 ) : (
+                                    /* FIX: text-base */
                                     <input 
                                         type="number"
                                         placeholder="輸入每期"
@@ -555,7 +563,7 @@ export default function App() {
                                                 amount: val ? (Number(val) * formData.installmentCount).toString() : '' 
                                             });
                                         }}
-                                        className="w-full bg-white border border-blue-200 rounded-lg p-2 text-sm text-center font-bold text-blue-800 focus:outline-blue-500"
+                                        className="w-full bg-white border border-blue-200 rounded-lg p-2 text-base text-center font-bold text-blue-800 focus:outline-blue-500"
                                     />
                                 )}
                             </div>
@@ -567,7 +575,8 @@ export default function App() {
 
           <div>
             <label className="text-xs text-gray-500 mb-1 block font-medium">分類</label>
-            <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-sm focus:outline-blue-500">
+            {/* FIX: text-base */}
+            <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500">
               {formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資 (轉出)</option></>}
             </select>
           </div>
@@ -577,7 +586,8 @@ export default function App() {
               <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer flex-1"><input type="radio" name="tag" checked={formData.tag === 'want'} onChange={() => setFormData({...formData, tag: 'want'})} className="w-4 h-4 text-blue-600" /><span className={formData.tag === 'want' ? 'font-bold text-blue-600' : ''}>想要 (Want)</span></label>
             </div>
           )}
-          <input type="text" placeholder="備註" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-sm focus:outline-blue-500" />
+          {/* FIX: text-base */}
+          <input type="text" placeholder="備註" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500" />
           <div className="flex gap-3 pt-2">
              {editingId && <button onClick={(e) => requestDelete(e, editingId)} className="flex-1 bg-red-50 text-red-500 py-3 rounded-xl font-bold hover:bg-red-100 transition flex items-center justify-center gap-2"><Trash2 className="w-5 h-5" /> 刪除</button>}
             <button onClick={handleSave} className={`flex-[2] text-white py-3 rounded-xl font-bold transition flex items-center justify-center gap-2 ${editingId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-black hover:bg-gray-800'}`}><Save className="w-5 h-5" /> {editingId ? '儲存修改' : '新增紀錄'}</button>
@@ -717,11 +727,13 @@ export default function App() {
         <div className="space-y-5">
            <div>
               <label className="text-sm font-bold text-gray-700 block mb-2">累積可加碼資金</label>
-              <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.available || ''} onChange={e => setInitialStats({...initialStats, available: Number(e.target.value)})} /></div>
+              {/* FIX: text-base */}
+              <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 text-base focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.available || ''} onChange={e => setInitialStats({...initialStats, available: Number(e.target.value)})} /></div>
            </div>
            <div>
               <label className="text-sm font-bold text-gray-700 block mb-2">現金累積存款</label>
-              <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.savings || ''} onChange={e => setInitialStats({...initialStats, savings: Number(e.target.value)})} /></div>
+              {/* FIX: text-base */}
+              <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 text-base focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.savings || ''} onChange={e => setInitialStats({...initialStats, savings: Number(e.target.value)})} /></div>
            </div>
         </div>
       </div>
@@ -731,18 +743,19 @@ export default function App() {
             {CATEGORIES.filter(c => c !== '收入' && c !== '投資').map(cat => (
                <div key={cat} className="flex items-center gap-3">
                   <label className="w-20 text-sm font-medium text-gray-600">{cat}</label>
-                  <div className="flex-1 relative"><input type="number" placeholder="無預算" className="w-full bg-gray-50 rounded-lg px-3 py-2 text-sm font-bold text-gray-800 focus:outline-blue-500" value={budgets[cat] || ''} onChange={(e) => updateBudget(cat, e.target.value)} /></div>
+                  {/* FIX: text-base */}
+                  <div className="flex-1 relative"><input type="number" placeholder="無預算" className="w-full bg-gray-50 rounded-lg px-3 py-2 text-base font-bold text-gray-800 focus:outline-blue-500" value={budgets[cat] || ''} onChange={(e) => updateBudget(cat, e.target.value)} /></div>
                </div>
             ))}
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.5 for Yu-Pao (Native App Feel)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.6 for Yu-Pao (No Zoom + Larger Inputs)</p></div>
     </div>
   );
 
   return (
-    // 加入 select-none touch-manipulation overscroll-none 來優化 App 手感
+    // 加入 touch-none 或 touch-manipulation 來進一步防止縮放
     <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden relative select-none touch-manipulation overscroll-none">
        {deleteModal.show && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animation-fade-in">
