@@ -730,7 +730,7 @@ export default function App(): JSX.Element {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.4.0 for Yu-Pao (Clean Header & Layout)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.4.1 for Yu-Pao (Safe Area Fixed)</p></div>
     </div>
   );
 
@@ -749,8 +749,9 @@ export default function App(): JSX.Element {
         </div>
        )}
 
-      {/* Header: Fixed again as requested, without Emoji */}
-      <div className="flex-none bg-white px-6 pt-12 pb-4 border-b border-gray-100 z-20">
+      {/* Header: Fixed and adapted with safe-area-inset-top */}
+      {/* 修正：使用 env(safe-area-inset-top) 自動適應劉海高度，並移除右側 Emoji */}
+      <div className="flex-none bg-white px-6 pt-[calc(env(safe-area-inset-top)+20px)] pb-4 border-b border-gray-100 z-20">
         <div className="flex justify-between items-center">
           <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
           {/* Emoji removed */}
@@ -770,8 +771,9 @@ export default function App(): JSX.Element {
         </div>
       </div>
 
-      {/* Footer: 保持固定在底部，不受捲動影響 */}
-      <div className="flex-none bg-white border-t border-gray-200 px-6 py-4 flex justify-between items-center z-30">
+      {/* Footer: Adapted with safe-area-inset-bottom */}
+      {/* 修正：使用 env(safe-area-inset-bottom) 自動適應底部白條高度 */}
+      <div className="flex-none bg-white border-t border-gray-200 px-6 pt-4 pb-[calc(env(safe-area-inset-bottom)+20px)] flex justify-between items-center z-30">
         <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'}`}><PieChart className="w-6 h-6" /><span className="text-[10px] font-medium">總覽</span></button>
         <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'history' ? 'text-blue-600' : 'text-gray-400'}`}><List className="w-6 h-6" /><span className="text-[10px] font-medium">明細</span></button>
         <div className="relative -top-6"><button onClick={openAddMode} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-300 hover:scale-105 transition ${activeTab === 'form' && !editingId ? 'bg-black' : 'bg-blue-600'}`}><Plus className={`w-8 h-8 transition-transform ${activeTab === 'form' && !editingId ? 'rotate-45' : ''}`} /></button></div>
