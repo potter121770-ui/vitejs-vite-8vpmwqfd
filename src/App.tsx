@@ -70,7 +70,8 @@ export default function App() {
     let meta = document.querySelector('meta[name="viewport"]');
     if (!meta) {
       meta = document.createElement('meta');
-      meta.name = 'viewport';
+      // FIX: 使用 setAttribute 替代直接賦值 .name 以解決 TypeScript 報錯 (Property 'name' does not exist on type 'Element')
+      meta.setAttribute('name', 'viewport');
       document.head.appendChild(meta);
     }
     // 加入 interactive-widget=resizes-content 防止鍵盤把畫面頂上去導致跑版
@@ -751,46 +752,6 @@ export default function App() {
          </div>
       </div>
       <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.6 for Yu-Pao (No Zoom + Larger Inputs)</p></div>
-    </div>
-  );
-
-  return (
-    // 加入 touch-none 或 touch-manipulation 來進一步防止縮放
-    <div className="min-h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden relative select-none touch-manipulation overscroll-none">
-       {deleteModal.show && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animation-fade-in">
-           <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs transform transition-all scale-100">
-              <div className="flex flex-col items-center text-center mb-4"><div className="w-12 h-12 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-3"><AlertCircle className="w-6 h-6" /></div><h3 className="text-lg font-bold text-gray-900">確定要刪除嗎？</h3><p className="text-sm text-gray-500 mt-1">此動作無法復原。</p></div>
-              <div className="flex gap-3">
-                 <button onClick={() => setDeleteModal({ show: false, id: null })} className="flex-1 py-2.5 rounded-xl text-gray-700 font-bold bg-gray-100 hover:bg-gray-200 transition">取消</button>
-                 <button onClick={confirmDelete} className="flex-1 py-2.5 rounded-xl text-white font-bold bg-red-500 hover:bg-red-600 shadow-lg shadow-red-200 transition">刪除</button>
-              </div>
-           </div>
-        </div>
-       )}
-
-      <div className="bg-white px-6 pt-12 pb-4 sticky top-0 z-20 border-b border-gray-100">
-        <div className="flex justify-between items-center">
-          <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
-          <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border border-gray-200"><span className="text-lg">⚛️</span></div>
-        </div>
-      </div>
-
-      <div className="p-4 h-[calc(100vh-160px)] overflow-y-auto hide-scrollbar">
-        {activeTab === 'dashboard' && renderDashboardView()}
-        {activeTab === 'history' && renderHistoryView()}
-        {activeTab === 'form' && renderFormView()}
-        {activeTab === 'investment' && renderInvestmentView()}
-        {activeTab === 'settings' && renderSettingsView()}
-      </div>
-
-      <div className="absolute bottom-0 w-full bg-white border-t border-gray-200 px-6 py-4 flex justify-between items-center z-30">
-        <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'}`}><PieChart className="w-6 h-6" /><span className="text-[10px] font-medium">總覽</span></button>
-        <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'history' ? 'text-blue-600' : 'text-gray-400'}`}><List className="w-6 h-6" /><span className="text-[10px] font-medium">明細</span></button>
-        <div className="relative -top-6"><button onClick={openAddMode} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-300 hover:scale-105 transition ${activeTab === 'form' && !editingId ? 'bg-black' : 'bg-blue-600'}`}><Plus className={`w-8 h-8 transition-transform ${activeTab === 'form' && !editingId ? 'rotate-45' : ''}`} /></button></div>
-        <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'investment' ? 'text-blue-600' : 'text-gray-400'}`}><TrendingUp className="w-6 h-6" /><span className="text-[10px] font-medium">投資</span></button>
-        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'settings' ? 'text-blue-600' : 'text-gray-400'}`}><Settings className="w-6 h-6" /><span className="text-[10px] font-medium">設定</span></button>
-      </div>
     </div>
   );
 }
