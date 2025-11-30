@@ -5,7 +5,7 @@ import {
   LineChart, Line, PieChart as RePieChart, Pie, Cell 
 } from 'recharts';
 
-// --- Type Definitions (新增型別定義) ---
+// --- Type Definitions ---
 interface Transaction {
   id: number;
   date: string;
@@ -76,7 +76,7 @@ const CATEGORIES = [
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   
-  // --- State Initialization with Generics (加上型別宣告) ---
+  // --- State Initialization ---
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
       const saved = localStorage.getItem('yupao_transactions');
@@ -268,7 +268,7 @@ export default function App() {
       note: '', 
       tag: 'need', 
       type: 'expense',
-      isInstallment: false,
+      isInstallment: false, 
       installmentCount: 3,
       installmentCalcType: 'total',
       perMonthInput: ''
@@ -443,7 +443,12 @@ export default function App() {
             <button onClick={() => setFormData({...formData, type: 'expense', category: '飲食'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition ${formData.type === 'expense' ? 'bg-red-100 text-red-600 ring-2 ring-red-200' : 'bg-gray-50 text-gray-400'}`}>支出</button>
             <button onClick={() => setFormData({...formData, type: 'income', category: '收入'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition ${formData.type === 'income' ? 'bg-green-100 text-green-600 ring-2 ring-green-200' : 'bg-gray-50 text-gray-400'}`}>收入</button>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+
+          {/* FIX: 修正這裡的 Layout
+              原先是 grid-cols-2 (並排)，導致日期在手機上太擠。
+              現在改為 grid-cols-1 (垂直排列)，讓日期和金額各自佔據一行。
+          */}
+          <div className="grid grid-cols-1 gap-4">
             <div>
               <label className="text-xs text-gray-500 mb-1 block font-medium">日期 (或首期繳款日)</label>
               <input type="date" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-sm focus:outline-blue-500 font-medium" />
@@ -713,7 +718,7 @@ export default function App() {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.1 for Yu-Pao (TypeScript Fixed)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.2 for Yu-Pao (Layout Fixed)</p></div>
     </div>
   );
 
