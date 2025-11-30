@@ -367,7 +367,7 @@ export default function App(): JSX.Element {
   // --- Render Functions ---
 
   const renderDashboardView = () => (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-6">
       <div className="flex justify-between items-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
           <div className="flex items-center gap-2 text-gray-700 font-bold">
               <Calendar className="w-5 h-5 text-blue-600" />
@@ -449,7 +449,7 @@ export default function App(): JSX.Element {
   );
 
   const renderFormView = () => (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-6">
       <div className="flex items-center gap-2 mb-2">
          <button onClick={() => setActiveTab('history')} className="p-2 -ml-2 text-gray-500"><ChevronLeft /></button>
          <h3 className="font-bold text-xl text-gray-800">{editingId ? '編輯紀錄' : '新增紀錄'}</h3>
@@ -592,7 +592,7 @@ export default function App(): JSX.Element {
       }, {} as { [key: string]: Transaction[] });
 
     return (
-      <div className="space-y-6 pb-20">
+      <div className="space-y-6">
         <div className="flex justify-between items-end px-2">
           <h3 className="font-bold text-2xl text-gray-800">歷史紀錄</h3>
           <p className="text-xs text-gray-400 mb-1">共 {transactions.length} 筆</p>
@@ -630,7 +630,7 @@ export default function App(): JSX.Element {
   };
 
   const renderInvestmentView = () => (
-    <div className="space-y-6 pb-20 relative">
+    <div className="space-y-6 relative">
        <div className="bg-gray-900 p-6 rounded-3xl text-white shadow-lg relative overflow-hidden">
         <div className="absolute -right-10 -top-10 w-40 h-40 bg-blue-500 rounded-full opacity-20 blur-3xl"></div>
         <div className="relative z-10">
@@ -703,7 +703,7 @@ export default function App(): JSX.Element {
   );
 
   const renderSettingsView = () => (
-    <div className="space-y-6 pb-20">
+    <div className="space-y-6">
       <div className="flex items-center gap-2 mb-2 px-2"><h3 className="font-bold text-2xl text-gray-800">設定</h3></div>
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
         <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><Settings className="w-5 h-5 text-gray-600" /> 初始資產配置</h4>
@@ -730,13 +730,13 @@ export default function App(): JSX.Element {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.3.8 for Yu-Pao (Fixed Header/Footer)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.4.0 for Yu-Pao (Clean Header & Layout)</p></div>
     </div>
   );
 
   return (
-    // FIX: 改用 h-screen 和 flex flex-col 實現固定的頭尾和可捲動的中間
-    <div className="h-screen bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden flex flex-col relative select-none touch-manipulation overscroll-none">
+    // FIX: 使用 h-[100dvh] 確保在行動裝置上高度正確，解決被瀏覽器工具列遮擋的問題
+    <div className="h-screen h-[100dvh] bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden flex flex-col relative select-none touch-manipulation overscroll-none">
        {deleteModal.show && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animation-fade-in">
            <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs transform transition-all scale-100">
@@ -749,24 +749,28 @@ export default function App(): JSX.Element {
         </div>
        )}
 
-      {/* Header: flex-none 保證不縮放 */}
+      {/* Header: Fixed again as requested, without Emoji */}
       <div className="flex-none bg-white px-6 pt-12 pb-4 border-b border-gray-100 z-20">
         <div className="flex justify-between items-center">
           <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
-          <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center border border-gray-200"><span className="text-lg">⚛️</span></div>
+          {/* Emoji removed */}
         </div>
       </div>
 
-      {/* Content: flex-1 自動填滿剩餘空間, overflow-y-auto 允許捲動 */}
-      <div className="flex-1 overflow-y-auto p-4 hide-scrollbar relative">
-        {activeTab === 'dashboard' && renderDashboardView()}
-        {activeTab === 'history' && renderHistoryView()}
-        {activeTab === 'form' && renderFormView()}
-        {activeTab === 'investment' && renderInvestmentView()}
-        {activeTab === 'settings' && renderSettingsView()}
+      {/* Content Area: Only content scrolls */}
+      {/* FIX: pb-32 大幅增加底部留白，確保最後一張卡片能滑到「+」按鈕上方而不被擋住 */}
+      <div className="flex-1 overflow-y-auto hide-scrollbar relative pb-32">
+        {/* 實際頁面內容 */}
+        <div className="p-4">
+          {activeTab === 'dashboard' && renderDashboardView()}
+          {activeTab === 'history' && renderHistoryView()}
+          {activeTab === 'form' && renderFormView()}
+          {activeTab === 'investment' && renderInvestmentView()}
+          {activeTab === 'settings' && renderSettingsView()}
+        </div>
       </div>
 
-      {/* Footer: flex-none 保證不縮放, 固定在底部 */}
+      {/* Footer: 保持固定在底部，不受捲動影響 */}
       <div className="flex-none bg-white border-t border-gray-200 px-6 py-4 flex justify-between items-center z-30">
         <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'}`}><PieChart className="w-6 h-6" /><span className="text-[10px] font-medium">總覽</span></button>
         <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'history' ? 'text-blue-600' : 'text-gray-400'}`}><List className="w-6 h-6" /><span className="text-[10px] font-medium">明細</span></button>
