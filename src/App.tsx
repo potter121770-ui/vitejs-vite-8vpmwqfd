@@ -753,7 +753,7 @@ export default function App(): JSX.Element {
       {/* 修正：使用 env(safe-area-inset-top) 自動適應劉海高度，並移除右側 Emoji */}
       <div className="flex-none bg-white px-6 pt-[calc(env(safe-area-inset-top)+20px)] pb-4 border-b border-gray-100 z-20">
         <div className="flex justify-between items-center">
-          <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
+          <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都將離財務獨立更進一步</p></div>
           {/* Emoji removed */}
         </div>
       </div>
