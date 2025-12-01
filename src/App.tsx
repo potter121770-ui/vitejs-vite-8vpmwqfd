@@ -1,11 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, Download, Upload, Coffee, CheckCircle } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
-
-// --- Type Definitions ---
-// interface Transaction { ... } (Removed TS interfaces for pure JS/React environment compatibility if needed, but keeping logic consistent)
 
 // --- 色彩配置 ---
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
@@ -15,7 +12,9 @@ const INITIAL_TRANSACTIONS = [];
 const INITIAL_BUDGETS = {};
 const INITIAL_STATS_DATA = {
   available: 0, 
-  savings: 0,   
+  savings: 0,
+  emergencyCurrent: 0, // 初始緊急預備金
+  emergencyGoal: 60000 // 預設緊急預備金目標 (例如6個月生活費)
 };
 
 const CATEGORIES = [
@@ -59,7 +58,9 @@ export default function App() {
   const [initialStats, setInitialStats] = useState(() => {
     try {
       const saved = localStorage.getItem('yupao_stats_v2');
-      return saved ? JSON.parse(saved) : INITIAL_STATS_DATA;
+      // 兼容舊資料，確保有 emergency 欄位
+      const parsed = saved ? JSON.parse(saved) : INITIAL_STATS_DATA;
+      return { ...INITIAL_STATS_DATA, ...parsed };
     } catch (e) {
       return INITIAL_STATS_DATA;
     }
@@ -119,7 +120,7 @@ export default function App() {
   
   const [editingId, setEditingId] = useState(null);
 
-  // --- 核心邏輯計算 ---
+  // --- 核心邏輯計算 (包含緊急預備金瀑布流) ---
   const stats = useMemo(() => {
     let monthlyRawData = {};
     
@@ -128,8 +129,8 @@ export default function App() {
           income: 0, 
           expense: 0, 
           actualInvested: 0, 
-          need: 0, // 新增：需要花費
-          want: 0, // 新增：想要花費
+          need: 0, 
+          want: 0, 
           categoryMap: {} 
         };
     });
@@ -149,16 +150,11 @@ export default function App() {
              monthlyRawData[monthKey].expense += Number(t.amount);
          }
       } else {
-        // 一般消費支出
         const amount = Number(t.amount);
         monthlyRawData[monthKey].expense += amount;
         
-        // 計算 Need / Want (排除投資)
-        if (t.tag === 'need') {
-          monthlyRawData[monthKey].need += amount;
-        } else if (t.tag === 'want') {
-          monthlyRawData[monthKey].want += amount;
-        }
+        if (t.tag === 'need') monthlyRawData[monthKey].need += amount;
+        else if (t.tag === 'want') monthlyRawData[monthKey].want += amount;
 
         if (!monthlyRawData[monthKey].categoryMap[t.category]) monthlyRawData[monthKey].categoryMap[t.category] = 0;
         monthlyRawData[monthKey].categoryMap[t.category] += amount;
@@ -170,26 +166,30 @@ export default function App() {
     let accumulatedDeficit = 0;
     let cumulativeInvestable = initialStats.available; 
     let cumulativeSavings = initialStats.savings;
+    let runningEmergencyFund = initialStats.emergencyCurrent || 0; // 緊急預備金水位
+    const emergencyGoal = initialStats.emergencyGoal || 60000;
+    
     let carryOverBudget = 0; 
-
     let processedMonthsData = {};
 
     sortedMonthsAsc.forEach(month => {
       const { income, expense, actualInvested, categoryMap, need, want } = monthlyRawData[month];
       const netIncome = income - expense;
       
-      let monthlyMaxInvestable = carryOverBudget;
-
-      let surplusForNextMonth = 0; 
-      let currentMonthSavingsAddon = 0; 
+      let monthlyMaxInvestable = carryOverBudget; // 這是上個月的 90% 盈餘
+      
+      let surplusForNextMonth = 0; // 這是本月產生的 90% 潛在盈餘
+      let currentMonthSavingsAddon = 0; // 這是本月產生的 10% 潛在存款
       let deficitDeducted = 0; 
       
+      // 1. 計算本月盈餘分配 (先處理赤字)
       if (netIncome > 0) {
         if (netIncome >= accumulatedDeficit) {
            deficitDeducted = accumulatedDeficit;
            let realSurplus = netIncome - accumulatedDeficit;
            accumulatedDeficit = 0; 
             
+           // 潛在分配：尚未考慮緊急預備金
            surplusForNextMonth = realSurplus * 0.9;
            currentMonthSavingsAddon = realSurplus * 0.1;
         } else {
@@ -204,11 +204,54 @@ export default function App() {
         currentMonthSavingsAddon = 0;
       }
 
+      // 2. 緊急預備金優先攔截邏輯
+      let divertedToEmergency = 0;
+      const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
+
+      if (emergencyGap > 0) {
+        // Priority A: 從 "新增加碼資金 (surplusForNextMonth)" 扣
+        const takeFromInvest = Math.min(surplusForNextMonth, emergencyGap);
+        surplusForNextMonth -= takeFromInvest;
+        divertedToEmergency += takeFromInvest;
+        
+        // Priority B: 如果還不夠，從 "現金存款 (currentMonthSavingsAddon)" 扣
+        const remainingGap = emergencyGap - takeFromInvest;
+        if (remainingGap > 0) {
+            const takeFromSavings = Math.min(currentMonthSavingsAddon, remainingGap);
+            currentMonthSavingsAddon -= takeFromSavings;
+            divertedToEmergency += takeFromSavings;
+        }
+      }
+
+      // 更新各個水庫
+      runningEmergencyFund += divertedToEmergency;
       cumulativeSavings += currentMonthSavingsAddon;
       
+      // cumulativeInvestable 計算：上個月結轉進來的預算 + 本月新增(被預備金扣過後) - 實際投入
+      // 注意：這裡的 monthlyMaxInvestable 是指「月初時」可用的（來自上個月）。
+      // 本月產生的 surplusForNextMonth 是下個月才變成 monthlyMaxInvestable。
+      // 但我們為了顯示「累積可加碼」，需要把本月的變化也算進去
+      
+      // 修正邏輯：
+      // cumulativeInvestable 變化 = + (本月預算來源，即上月盈餘) - (本月實際投資)
+      // *注意*：surplusForNextMonth 是「下個月的預算」，不影響「目前累積」。
+      // 但為了讓使用者看到「加上這個月盈餘後」的總額，我們通常在 UI 顯示的是預測值。
+      // 在此邏輯中，cumulativeInvestable 嚴格定義為「已經入帳可隨時動用的」。
+      // 所以本月產生的 surplusForNextMonth 其實是加到 *下個月* 的 monthlyMaxInvestable。
+      
+      // 簡化模型：cumulativeInvestable 隨時包含所有歷史剩下的錢。
+      // 當月變化 = +carryOverBudget (上月給的) - actualInvested
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
       
+      // 將本月產生的剩餘盈餘 (被預備金扣完後) 放入 carryOverBudget 帶給下個月
       carryOverBudget = surplusForNextMonth;
+      
+      // 如果要即時顯示「如果我現在把本月盈餘也算進去」，我們可以另外算一個欄位，
+      // 但標準邏輯是本月盈餘下月用。這裡為了讓數字好看，我們在 investment view 顯示的是 cumulativeAddOnAvailable (包含歷史結餘)。
+      
+      // 為了修正一個常見的期待：使用者通常覺得「這個月省下的錢，現在就是我的資產了」。
+      // 所以我們把 surplusForNextMonth 也加進 cumulativeAddOnAvailable 供顯示，但在下個月計算時不要重複加。
+      // (這裡保持原邏輯：carryOverBudget 是流動變數，cumulative 是存量)
 
       processedMonthsData[month] = {
           income,
@@ -216,14 +259,19 @@ export default function App() {
           netIncome,
           categoryMap,
           actualInvested,
-          need, // 傳遞數據
-          want, // 傳遞數據
+          need, 
+          want, 
           monthlyMaxInvestable,
           monthlyRemainingInvestable: monthlyMaxInvestable - actualInvested,
-          cumulativeAddOnAvailable: cumulativeInvestable,
+          // 這裡的 cumulative 包含了直到「上個月底」的餘額 + 本月原本可用的額度 - 本月已用
+          // 我們通常也會想加上「本月剛產生的盈餘(surplusForNextMonth)」，這樣才像「當下總資產」
+          cumulativeAddOnAvailable: cumulativeInvestable + surplusForNextMonth, 
           deficitDeducted, 
           accumulatedDeficit, 
           savings: cumulativeSavings,
+          emergencyFund: runningEmergencyFund, // 當下緊急預備金總額
+          divertedToEmergency, // 本月貢獻給緊急預備金的錢
+          emergencyGoal,
           budgetSource: monthlyMaxInvestable > 0 ? 'based_on_prev_surplus' : 'prev_month_deficit_or_zero'
       };
     });
@@ -231,7 +279,9 @@ export default function App() {
     const currentData = processedMonthsData[selectedMonth] || {
         income: 0, expense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, need: 0, want: 0,
         monthlyMaxInvestable: 0, monthlyRemainingInvestable: 0, cumulativeAddOnAvailable: cumulativeInvestable,
-        deficitDeducted: 0, accumulatedDeficit: 0, savings: cumulativeSavings, budgetSource: 'no_data'
+        deficitDeducted: 0, accumulatedDeficit: 0, savings: cumulativeSavings, 
+        emergencyFund: runningEmergencyFund, divertedToEmergency: 0, emergencyGoal: emergencyGoal,
+        budgetSource: 'no_data'
     };
 
     const pieData = Object.keys(currentData.categoryMap).map(key => ({
@@ -352,123 +402,143 @@ export default function App() {
 
   // --- Views ---
 
-  const renderDashboardView = () => (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
-          <div className="flex items-center gap-2 text-gray-700 font-bold">
-              <Calendar className="w-5 h-5 text-blue-600" />
-              <span className="text-base">{selectedMonth}</span>
-          </div>
-          <select 
-            value={selectedMonth} 
-            onChange={(e) => setSelectedMonth(e.target.value)}
-            className="bg-gray-50 border border-gray-200 text-gray-700 text-base rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none"
-          >
-            {availableMonths.map(m => ( <option key={m} value={m}>{m}</option> ))}
-          </select>
-      </div>
+  const renderDashboardView = () => {
+    const { emergencyFund, emergencyGoal } = stats.dashboard;
+    const emergencyProgress = Math.min((emergencyFund / emergencyGoal) * 100, 100);
+    const isEmergencyFull = emergencyFund >= emergencyGoal;
 
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 p-6 rounded-3xl text-white shadow-lg">
-        <div className="flex justify-between items-center mb-4">
-          <div>
-            <h2 className="text-sm opacity-80">{selectedMonth} 淨收支</h2>
-            <p className="text-3xl font-bold">NT$ {stats.dashboard.netIncome.toLocaleString()}</p>
-          </div>
-          <Wallet className="w-8 h-8 opacity-80" />
+    return (
+      <div className="space-y-5">
+        <div className="flex justify-between items-center bg-white p-3 rounded-2xl shadow-sm border border-gray-100">
+            <div className="flex items-center gap-2 text-gray-700 font-bold">
+                <Calendar className="w-5 h-5 text-blue-600" />
+                <span className="text-base">{selectedMonth}</span>
+            </div>
+            <select 
+              value={selectedMonth} 
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="bg-gray-50 border border-gray-200 text-gray-700 text-base rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none"
+            >
+              {availableMonths.map(m => ( <option key={m} value={m}>{m}</option> ))}
+            </select>
         </div>
-        <div className="grid grid-cols-2 gap-4 mt-4 bg-white/10 p-4 rounded-xl backdrop-blur-sm">
-          <div>
-            <p className="text-xs opacity-70">總收入</p>
-            <p className="font-semibold text-green-300">+{stats.dashboard.income.toLocaleString()}</p>
-          </div>
-          <div>
-            <p className="text-xs opacity-70">總支出</p>
-            <p className="font-semibold text-red-300">-{stats.dashboard.expense.toLocaleString()}</p>
-          </div>
-        </div>
-      </div>
 
-      {/* 新增：Need vs Want 區塊 */}
-      <div className="grid grid-cols-2 gap-4">
-          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-28 relative overflow-hidden">
-             <div className="relative z-10">
-               <div className="flex items-center gap-1.5 mb-1 text-gray-500">
-                  <CheckCircle className="w-4 h-4" />
-                  <span className="text-xs font-bold">需要 (Need)</span>
+        {/* 緊急預備金卡片 */}
+        <div className={`p-5 rounded-3xl text-white shadow-lg relative overflow-hidden transition-all ${isEmergencyFull ? 'bg-gradient-to-r from-emerald-500 to-teal-600' : 'bg-gradient-to-r from-slate-700 to-slate-800'}`}>
+           <div className="absolute right-[-20px] top-[-20px] opacity-20">
+              <ShieldCheck className="w-32 h-32" />
+           </div>
+           <div className="relative z-10">
+              <div className="flex justify-between items-start mb-2">
+                 <div>
+                    <h2 className="text-sm font-bold opacity-90 flex items-center gap-2"><Shield className="w-4 h-4" /> 緊急預備金</h2>
+                    <p className="text-2xl font-bold mt-1">${Math.floor(emergencyFund).toLocaleString()} <span className="text-xs opacity-60 font-normal">/ ${emergencyGoal.toLocaleString()}</span></p>
+                 </div>
+                 {isEmergencyFull ? (
+                    <span className="bg-white/20 px-2 py-1 rounded text-xs font-bold">已達標</span>
+                 ) : (
+                    <span className="bg-orange-500 px-2 py-1 rounded text-xs font-bold animate-pulse">補水中</span>
+                 )}
+              </div>
+              
+              <div className="w-full bg-black/20 rounded-full h-2.5 mb-1">
+                 <div className={`h-2.5 rounded-full transition-all duration-1000 ${isEmergencyFull ? 'bg-white' : 'bg-orange-400'}`} style={{ width: `${emergencyProgress}%` }}></div>
+              </div>
+              <p className="text-[10px] opacity-70 text-right">
+                 {isEmergencyFull ? '資金將正常流向投資與儲蓄' : '優先級：加碼資金 > 現金存款 > 補滿此池'}
+              </p>
+           </div>
+        </div>
+
+        {/* 淨收支卡片 (縮小版) */}
+        <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex justify-between items-center">
+          <div>
+            <p className="text-xs text-gray-500">本月淨收支</p>
+            <p className={`text-2xl font-bold ${stats.dashboard.netIncome >= 0 ? 'text-blue-600' : 'text-red-500'}`}>
+              {stats.dashboard.netIncome >= 0 ? '+' : ''}{stats.dashboard.netIncome.toLocaleString()}
+            </p>
+          </div>
+          <div className="text-right">
+             <p className="text-xs text-green-600">收入 +{stats.dashboard.income.toLocaleString()}</p>
+             <p className="text-xs text-red-500">支出 -{stats.dashboard.expense.toLocaleString()}</p>
+          </div>
+        </div>
+
+        {/* Need vs Want 區塊 */}
+        <div className="grid grid-cols-2 gap-4">
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-24 relative overflow-hidden">
+               <div className="relative z-10">
+                 <div className="flex items-center gap-1.5 mb-1 text-gray-500">
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    <span className="text-xs font-bold">需要 (Need)</span>
+                 </div>
+                 <p className="text-lg font-bold text-gray-800">${stats.dashboard.need.toLocaleString()}</p>
                </div>
-               <p className="text-xl font-bold text-gray-800">${stats.dashboard.need.toLocaleString()}</p>
-             </div>
-             <div className="h-1.5 w-full bg-gray-100 rounded-full mt-2 overflow-hidden relative z-10">
-                 {/* 這裡的進度條如果是 100% 代表佔總支出的比例 */}
-                 <div className="h-full bg-gray-500 rounded-full" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.need / stats.dashboard.expense * 100) : 0}%` }}></div>
-             </div>
-             <div className="absolute -right-3 -bottom-3 text-gray-100 opacity-50 z-0">
-                <CheckCircle className="w-20 h-20" />
-             </div>
+               <div className="h-1.5 w-full bg-gray-100 rounded-full mt-1 overflow-hidden relative z-10">
+                   <div className="h-full bg-gray-500 rounded-full" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.need / stats.dashboard.expense * 100) : 0}%` }}></div>
+               </div>
+            </div>
+            
+            <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-24 relative overflow-hidden">
+               <div className="relative z-10">
+                 <div className="flex items-center gap-1.5 mb-1 text-yellow-600">
+                    <Coffee className="w-3.5 h-3.5" />
+                    <span className="text-xs font-bold">想要 (Want)</span>
+                 </div>
+                 <p className="text-lg font-bold text-gray-800">${stats.dashboard.want.toLocaleString()}</p>
+               </div>
+               <div className="h-1.5 w-full bg-yellow-50 rounded-full mt-1 overflow-hidden relative z-10">
+                   <div className="h-full bg-yellow-400 rounded-full" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.want / stats.dashboard.expense * 100) : 0}%` }}></div>
+               </div>
+            </div>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+          <div className="flex justify-between items-center mb-4">
+             <h3 className="font-bold text-gray-800 flex items-center">
+               <PieChart className="w-5 h-5 mr-2 text-blue-500" />
+               預算執行狀況
+             </h3>
+             <button onClick={() => setActiveTab('settings')} className="text-xs text-blue-600 font-medium">調整預算</button>
           </div>
           
-          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-28 relative overflow-hidden">
-             <div className="relative z-10">
-               <div className="flex items-center gap-1.5 mb-1 text-yellow-600">
-                  <Coffee className="w-4 h-4" />
-                  <span className="text-xs font-bold">想要 (Want)</span>
-               </div>
-               <p className="text-xl font-bold text-gray-800">${stats.dashboard.want.toLocaleString()}</p>
-             </div>
-             <div className="h-1.5 w-full bg-yellow-50 rounded-full mt-2 overflow-hidden relative z-10">
-                 <div className="h-full bg-yellow-400 rounded-full" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.want / stats.dashboard.expense * 100) : 0}%` }}></div>
-             </div>
-             <div className="absolute -right-3 -bottom-3 text-yellow-50 opacity-50 z-0">
-                <Coffee className="w-20 h-20" />
-             </div>
-          </div>
-      </div>
-
-      <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-        <div className="flex justify-between items-center mb-4">
-           <h3 className="font-bold text-gray-800 flex items-center">
-             <PieChart className="w-5 h-5 mr-2 text-blue-500" />
-             預算執行狀況
-           </h3>
-           <button onClick={() => setActiveTab('settings')} className="text-xs text-blue-600 font-medium">調整預算</button>
+          {Object.entries(budgets).filter(([_, budget]) => budget > 0).map(([cat, budget]) => {
+            const currentMonthTransactions = transactions.filter(t => t.date.startsWith(selectedMonth));
+            const spent = currentMonthTransactions.filter(t => t.category === cat).reduce((sum, t) => sum + Number(t.amount), 0);
+            const percent = Math.min((spent / budget) * 100, 100);
+            return (
+              <div key={cat} className="mb-4 last:mb-0">
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="text-gray-600">{cat}</span>
+                  <span className="text-gray-500">{spent.toLocaleString()} / {budget.toLocaleString()}</span>
+                </div>
+                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                  <div className={`h-full rounded-full ${percent > 90 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
+                </div>
+              </div>
+            );
+          })}
+          {Object.values(budgets).every(b => b === 0) && <p className="text-sm text-gray-400 text-center py-2">所有預算皆未設定，請至設定頁面新增</p>}
         </div>
-        
-        {Object.entries(budgets).filter(([_, budget]) => budget > 0).map(([cat, budget]) => {
-          const currentMonthTransactions = transactions.filter(t => t.date.startsWith(selectedMonth));
-          const spent = currentMonthTransactions.filter(t => t.category === cat).reduce((sum, t) => sum + Number(t.amount), 0);
-          const percent = Math.min((spent / budget) * 100, 100);
-          return (
-            <div key={cat} className="mb-4 last:mb-0">
-              <div className="flex justify-between text-sm mb-1">
-                <span className="text-gray-600">{cat}</span>
-                <span className="text-gray-500">{spent.toLocaleString()} / {budget.toLocaleString()}</span>
-              </div>
-              <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
-                <div className={`h-full rounded-full ${percent > 90 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
-              </div>
-            </div>
-          );
-        })}
-        {Object.values(budgets).every(b => b === 0) && <p className="text-sm text-gray-400 text-center py-2">所有預算皆未設定，請至設定頁面新增</p>}
-      </div>
 
-      <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 h-80">
-        <h3 className="font-bold text-gray-800 mb-2">支出分類佔比 ({selectedMonth})</h3>
-        {stats.dashboard.pieData.length > 0 ? (
-            <ResponsiveContainer width="100%" height="100%">
-            <RePieChart>
-                <Pie data={stats.dashboard.pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={80} paddingAngle={5} dataKey="value" label={({name, value}) => `${name} $${value}`}>
-                {stats.dashboard.pieData.map((entry, index) => ( <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} /> ))}
-                </Pie>
-                <RechartsTooltip />
-            </RePieChart>
-            </ResponsiveContainer>
-        ) : (
-            <div className="h-full flex items-center justify-center text-gray-400 text-sm">本月尚無支出紀錄</div>
-        )}
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 h-80">
+          <h3 className="font-bold text-gray-800 mb-2">支出分類佔比 ({selectedMonth})</h3>
+          {stats.dashboard.pieData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+              <RePieChart>
+                  <Pie data={stats.dashboard.pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={80} paddingAngle={5} dataKey="value" label={({name, value}) => `${name} $${value}`}>
+                  {stats.dashboard.pieData.map((entry, index) => ( <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} /> ))}
+                  </Pie>
+                  <RechartsTooltip />
+              </RePieChart>
+              </ResponsiveContainer>
+          ) : (
+              <div className="h-full flex items-center justify-center text-gray-400 text-sm">本月尚無支出紀錄</div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   const renderFormView = () => (
     <div className="space-y-6">
@@ -704,10 +774,15 @@ export default function App() {
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-white/10 p-3 rounded-xl backdrop-blur-md">
               <div className="flex items-center gap-1 mb-1">
-                 <p className="text-xs text-gray-400">當月新增可投資額度 (90%盈餘)</p>
+                 <p className="text-xs text-gray-400">當月新增可投資額度</p>
                  <Info className="w-3 h-3 text-gray-500 cursor-help" />
               </div>
               <p className="text-xl font-bold text-blue-300">${stats.investment.monthlyMaxInvestable.toLocaleString() || 0}</p>
+              {stats.investment.divertedToEmergency > 0 && (
+                  <p className="text-[10px] text-orange-300 mt-1">
+                    (已扣除 ${stats.investment.divertedToEmergency.toLocaleString()} 至預備金)
+                  </p>
+              )}
             </div>
             <div className="bg-white/10 p-3 rounded-xl backdrop-blur-md">
                <p className="text-xs text-gray-400 mb-1">當月實際投入金額</p>
@@ -759,6 +834,23 @@ export default function App() {
   const renderSettingsView = () => (
     <div className="space-y-6">
       <div className="flex items-center gap-2 mb-2 px-2"><h3 className="font-bold text-2xl text-gray-800">設定</h3></div>
+      
+      {/* 緊急預備金設定 */}
+      <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
+        <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-gray-600" /> 緊急預備金設定</h4>
+        <div className="space-y-5">
+           <div>
+              <label className="text-sm font-bold text-gray-700 block mb-2">初始緊急預備金</label>
+              <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 text-base focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.emergencyCurrent || ''} onChange={e => setInitialStats({...initialStats, emergencyCurrent: Number(e.target.value)})} /></div>
+           </div>
+           <div>
+              <label className="text-sm font-bold text-gray-700 block mb-2">預備金目標金額</label>
+              <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 text-base focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.emergencyGoal || ''} onChange={e => setInitialStats({...initialStats, emergencyGoal: Number(e.target.value)})} /></div>
+              <p className="text-xs text-gray-400 mt-2">建議設定為 3~6 個月的生活開銷</p>
+           </div>
+        </div>
+      </div>
+
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
         <h4 className="font-bold text-gray-800 mb-4 flex items-center gap-2"><Settings className="w-5 h-5 text-gray-600" /> 初始資產配置</h4>
         <div className="space-y-5">
@@ -784,7 +876,7 @@ export default function App() {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.4.4 for Yu-Pao (Investment UI Refined)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.5 for Yu-Pao (Emergency Fund Added)</p></div>
     </div>
   );
 
