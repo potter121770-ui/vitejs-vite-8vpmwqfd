@@ -26,6 +26,7 @@ interface StatsData {
   savings: number;
   emergencyCurrent: number;
   emergencyGoal: number;
+  initialInvestable?: number; // 新增：初始當月可投資金額
 }
 
 interface MonthlyData {
@@ -61,7 +62,8 @@ const INITIAL_STATS_DATA: StatsData = {
   available: 0, 
   savings: 0,
   emergencyCurrent: 0, 
-  emergencyGoal: 60000 
+  emergencyGoal: 60000,
+  initialInvestable: 0 // 預設為 0
 };
 
 const CATEGORIES = [
@@ -216,7 +218,8 @@ export default function App() {
     let runningEmergencyFund = initialStats.emergencyCurrent || 0; 
     const emergencyGoal = initialStats.emergencyGoal || 60000;
     
-    let carryOverBudget = 0; 
+    // 修改：使用使用者設定的初始值作為第一個月的起始預算
+    let carryOverBudget = initialStats.initialInvestable || 0; 
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     sortedMonthsAsc.forEach(month => {
@@ -298,7 +301,9 @@ export default function App() {
 
     const currentData = processedMonthsData[selectedMonth] || {
         income: 0, expense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, need: 0, want: 0,
-        monthlyMaxInvestable: 0, monthlyRemainingInvestable: 0, cumulativeAddOnAvailable: cumulativeInvestable,
+        monthlyMaxInvestable: carryOverBudget, // 如果沒有當月資料，至少顯示結轉/初始值
+        monthlyRemainingInvestable: carryOverBudget - 0, 
+        cumulativeAddOnAvailable: cumulativeInvestable,
         deficitDeducted: 0, accumulatedDeficit: 0, savings: cumulativeSavings, 
         emergencyFund: runningEmergencyFund, divertedToEmergency: 0, emergencyGoal: emergencyGoal,
         budgetSource: 'no_data'
@@ -354,6 +359,16 @@ export default function App() {
       investSource: source
     });
     setActiveTab('form');
+  };
+
+  const handleFabClick = () => {
+    if (activeTab === 'form' && !editingId) {
+        // 如果在新增模式 (黑色叉叉)，點擊則取消並返回總覽
+        setActiveTab('dashboard');
+    } else {
+        // 否則進入新增模式
+        openAddMode();
+    }
   };
 
   const handleSave = () => {
@@ -879,6 +894,10 @@ export default function App() {
               <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 text-base focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.available || ''} onChange={e => setInitialStats({...initialStats, available: Number(e.target.value)})} /></div>
            </div>
            <div>
+              <label className="text-sm font-bold text-gray-700 block mb-2">初始當月新增可投資額度</label>
+              <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 text-base focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.initialInvestable || ''} onChange={e => setInitialStats({...initialStats, initialInvestable: Number(e.target.value)})} /></div>
+           </div>
+           <div>
               <label className="text-sm font-bold text-gray-700 block mb-2">現金累積存款</label>
               <div className="relative"><span className="absolute left-3 top-3 text-gray-400">$</span><input type="number" placeholder="0" className="w-full bg-gray-50 rounded-xl pl-8 pr-4 py-3 font-bold text-gray-900 text-base focus:outline-blue-500 focus:bg-white border border-transparent focus:border-blue-200 transition" value={initialStats.savings || ''} onChange={e => setInitialStats({...initialStats, savings: Number(e.target.value)})} /></div>
            </div>
@@ -958,7 +977,7 @@ export default function App() {
           <div className="flex-none bg-white border-t border-gray-200 px-6 pt-4 pb-[calc(env(safe-area-inset-bottom)+20px)] flex justify-between items-center z-30">
             <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'}`}><PieChart className="w-6 h-6" /><span className="text-[10px] font-medium">總覽</span></button>
             <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'history' ? 'text-blue-600' : 'text-gray-400'}`}><List className="w-6 h-6" /><span className="text-[10px] font-medium">明細</span></button>
-            <div className="relative -top-6"><button onClick={openAddMode} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-300 hover:scale-105 transition ${activeTab === 'form' && !editingId ? 'bg-black' : 'bg-blue-600'}`}><Plus className={`w-8 h-8 transition-transform ${activeTab === 'form' && !editingId ? 'rotate-45' : ''}`} /></button></div>
+            <div className="relative -top-6"><button onClick={handleFabClick} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-300 hover:scale-105 transition ${activeTab === 'form' && !editingId ? 'bg-black' : 'bg-blue-600'}`}><Plus className={`w-8 h-8 transition-transform ${activeTab === 'form' && !editingId ? 'rotate-45' : ''}`} /></button></div>
             <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'investment' ? 'text-blue-600' : 'text-gray-400'}`}><TrendingUp className="w-6 h-6" /><span className="text-[10px] font-medium">投資</span></button>
             <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'settings' ? 'text-blue-600' : 'text-gray-400'}`}><Settings className="w-6 h-6" /><span className="text-[10px] font-medium">設定</span></button>
           </div>
