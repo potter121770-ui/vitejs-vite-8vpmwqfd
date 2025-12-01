@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
 
-// --- Type Definitions (TypeScript 核心修正) ---
+// --- Type Definitions ---
 interface Transaction {
   id: number;
   date: string;
@@ -26,7 +26,7 @@ interface StatsData {
   savings: number;
   emergencyCurrent: number;
   emergencyGoal: number;
-  initialInvestable?: number; // 新增：初始當月可投資金額
+  initialInvestable?: number;
 }
 
 interface MonthlyData {
@@ -56,14 +56,14 @@ interface ProcessedMonthData extends MonthlyData {
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
 // --- 初始資料 ---
-const INITIAL_TRANSACTIONS: Transaction[] = []; // Explicit type
+const INITIAL_TRANSACTIONS: Transaction[] = [];
 const INITIAL_BUDGETS: Budgets = {};
 const INITIAL_STATS_DATA: StatsData = {
   available: 0, 
   savings: 0,
   emergencyCurrent: 0, 
   emergencyGoal: 60000,
-  initialInvestable: 0 // 預設為 0
+  initialInvestable: 0 
 };
 
 const CATEGORIES = [
@@ -81,7 +81,6 @@ export default function App() {
       meta.setAttribute('name', 'viewport');
       document.head.appendChild(meta);
     }
-    // 強制禁止縮放，並設定視口適配
     meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content');
 
     const preventPinch = (e: Event) => {
@@ -140,6 +139,10 @@ export default function App() {
   const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
 
+  // --- Calculator State ---
+  const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
+  const [calcDisplay, setCalcDisplay] = useState('0');
+
   const availableMonths = useMemo(() => {
     const months = new Set(transactions.map(t => t.date.substring(0, 7)));
     months.add(new Date().toISOString().substring(0, 7));
@@ -168,6 +171,47 @@ export default function App() {
   });
   
   const [editingId, setEditingId] = useState<number | null>(null);
+
+  // --- Calculator Logic ---
+  const handleCalcInput = (key: string) => {
+    if (key === 'AC') {
+        setCalcDisplay('0');
+    } else if (key === 'DEL') {
+        setCalcDisplay(prev => prev.length > 1 ? prev.slice(0, -1) : '0');
+    } else if (key === '=') {
+        try {
+            // 安全的運算過濾
+            // eslint-disable-next-line no-new-func
+            const result = new Function('return ' + calcDisplay.replace(/[^0-9+\-*/.]/g, ''))();
+            setCalcDisplay(String(result));
+        } catch (e) {
+            setCalcDisplay('Error');
+        }
+    } else if (key === 'OK') {
+        try {
+            // 如果最後還是算式，先算完再存
+            // eslint-disable-next-line no-new-func
+            const result = new Function('return ' + calcDisplay.replace(/[^0-9+\-*/.]/g, ''))();
+            const finalVal = Math.floor(Number(result)); // 金額通常取整數
+            setFormData(prev => ({ ...prev, amount: String(finalVal) }));
+            setIsCalculatorOpen(false);
+        } catch (e) {
+            setCalcDisplay('Error');
+        }
+    } else {
+        // 處理數字和運算符輸入
+        setCalcDisplay(prev => {
+            if (prev === '0' && !['+', '-', '*', '/', '.'].includes(key)) return key;
+            if (prev === 'Error') return key;
+            return prev + key;
+        });
+    }
+  };
+
+  const openCalculator = () => {
+      setCalcDisplay(formData.amount || '0');
+      setIsCalculatorOpen(true);
+  };
 
   // --- 核心邏輯計算 ---
   const stats = useMemo(() => {
@@ -218,7 +262,6 @@ export default function App() {
     let runningEmergencyFund = initialStats.emergencyCurrent || 0; 
     const emergencyGoal = initialStats.emergencyGoal || 60000;
     
-    // 修改：使用使用者設定的初始值作為第一個月的起始預算
     let carryOverBudget = initialStats.initialInvestable || 0; 
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
@@ -232,7 +275,6 @@ export default function App() {
       let currentMonthSavingsAddon = 0; 
       let deficitDeducted = 0; 
       
-      // 1. 計算本月盈餘分配 (先處理赤字)
       if (netIncome > 0) {
         if (netIncome >= accumulatedDeficit) {
            deficitDeducted = accumulatedDeficit;
@@ -253,17 +295,14 @@ export default function App() {
         currentMonthSavingsAddon = 0;
       }
 
-      // 2. 緊急預備金優先攔截邏輯
       let divertedToEmergency = 0;
       const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
 
       if (emergencyGap > 0) {
-        // Priority A: 從 "新增加碼資金" 扣
         const takeFromInvest = Math.min(surplusForNextMonth, emergencyGap);
         surplusForNextMonth -= takeFromInvest;
         divertedToEmergency += takeFromInvest;
         
-        // Priority B: 如果還不夠，從 "現金存款" 扣
         const remainingGap = emergencyGap - takeFromInvest;
         if (remainingGap > 0) {
             const takeFromSavings = Math.min(currentMonthSavingsAddon, remainingGap);
@@ -301,7 +340,7 @@ export default function App() {
 
     const currentData = processedMonthsData[selectedMonth] || {
         income: 0, expense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, need: 0, want: 0,
-        monthlyMaxInvestable: carryOverBudget, // 如果沒有當月資料，至少顯示結轉/初始值
+        monthlyMaxInvestable: carryOverBudget,
         monthlyRemainingInvestable: carryOverBudget - 0, 
         cumulativeAddOnAvailable: cumulativeInvestable,
         deficitDeducted: 0, accumulatedDeficit: 0, savings: cumulativeSavings, 
@@ -363,10 +402,8 @@ export default function App() {
 
   const handleFabClick = () => {
     if (activeTab === 'form' && !editingId) {
-        // 如果在新增模式 (黑色叉叉)，點擊則取消並返回總覽
         setActiveTab('dashboard');
     } else {
-        // 否則進入新增模式
         openAddMode();
     }
   };
@@ -581,7 +618,7 @@ export default function App() {
          <button onClick={() => setActiveTab('history')} className="p-2 -ml-2 text-gray-500"><ChevronLeft /></button>
          <h3 className="font-bold text-xl text-gray-800">{editingId ? '編輯紀錄' : '新增紀錄'}</h3>
       </div>
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 pb-20"> {/* pb-20 for calculator space if needed */}
         <div className="space-y-4">
           <div className="flex gap-2">
             <button onClick={() => setFormData({...formData, type: 'expense', category: '飲食', investSource: 'monthly'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition ${formData.type === 'expense' ? 'bg-red-100 text-red-600 ring-2 ring-red-200' : 'bg-gray-50 text-gray-400'}`}>支出</button>
@@ -594,7 +631,17 @@ export default function App() {
             </div>
             <div>
               <label className="text-xs text-gray-500 mb-1 block font-medium">金額 {formData.isInstallment && '(總額)'}</label>
-              <input type="number" placeholder="0" value={formData.amount} onChange={e => setFormData({...formData, amount: e.target.value})} className={`w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500 font-medium ${formData.installmentCalcType === 'monthly' && formData.isInstallment ? 'bg-gray-100 text-gray-500' : ''}`} readOnly={formData.installmentCalcType === 'monthly' && formData.isInstallment} />
+              <div className="relative">
+                <input 
+                  type="text" // Change to text for calculator display compatibility if using directly, but we use readOnly
+                  placeholder="0" 
+                  value={formData.amount} 
+                  readOnly // Important: prevent system keyboard
+                  onClick={openCalculator}
+                  className={`w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500 font-medium cursor-pointer ${formData.installmentCalcType === 'monthly' && formData.isInstallment ? 'bg-gray-100 text-gray-500' : ''}`} 
+                />
+                <Calculator className="absolute right-3 top-3.5 text-gray-400 w-5 h-5 pointer-events-none" />
+              </div>
             </div>
           </div>
            
@@ -915,7 +962,7 @@ export default function App() {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.6 for Yu-Pao (UI Fixed)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.7.1 for Yu-Pao (Bug Fix)</p></div>
     </div>
   );
 
@@ -955,6 +1002,47 @@ export default function App() {
                   </div>
                </div>
             </div>
+           )}
+
+           {/* Calculator Overlay */}
+           {isCalculatorOpen && (
+              <div className="absolute inset-x-0 bottom-0 z-50 bg-white rounded-t-3xl shadow-[0_-5px_20px_rgba(0,0,0,0.1)] animation-slide-up h-[45%] flex flex-col">
+                  {/* Display Area */}
+                  <div className="flex-1 bg-gray-50 p-4 border-b border-gray-100 flex flex-col justify-center items-end rounded-t-3xl">
+                      <span className="text-3xl font-bold text-gray-800 tracking-wide">{calcDisplay}</span>
+                  </div>
+                  
+                  {/* Keypad */}
+                  <div className="grid grid-cols-4 h-full">
+                      {['AC', '÷', '×', 'DEL'].map((btn) => (
+                        <button key={btn} onClick={() => handleCalcInput(btn === '÷' ? '/' : btn === '×' ? '*' : btn)} className="bg-gray-100 text-gray-600 font-bold text-lg active:bg-gray-200 flex items-center justify-center border-r border-b border-gray-200">
+                            {btn === 'DEL' ? <Delete className="w-6 h-6" /> : btn}
+                        </button>
+                      ))}
+                      {['7', '8', '9', '-'].map((btn) => (
+                        <button key={btn} onClick={() => handleCalcInput(btn)} className={`${['-'].includes(btn) ? 'bg-blue-50 text-blue-600' : 'bg-white text-gray-800'} font-bold text-2xl active:bg-gray-100 flex items-center justify-center border-r border-b border-gray-200`}>
+                            {btn}
+                        </button>
+                      ))}
+                      {['4', '5', '6', '+'].map((btn) => (
+                        <button key={btn} onClick={() => handleCalcInput(btn)} className={`${['+'].includes(btn) ? 'bg-blue-50 text-blue-600' : 'bg-white text-gray-800'} font-bold text-2xl active:bg-gray-100 flex items-center justify-center border-r border-b border-gray-200`}>
+                            {btn}
+                        </button>
+                      ))}
+                      {['1', '2', '3', '='].map((btn) => (
+                        <button key={btn} onClick={() => handleCalcInput(btn)} className={`${['='].includes(btn) ? 'bg-blue-600 text-white' : 'bg-white text-gray-800'} font-bold text-2xl active:opacity-90 flex items-center justify-center border-r border-b border-gray-200`}>
+                            {btn}
+                        </button>
+                      ))}
+                      {/* Last Row */}
+                      <button onClick={() => handleCalcInput('0')} className="col-span-1 bg-white text-gray-800 font-bold text-2xl active:bg-gray-100 flex items-center justify-center border-r border-gray-200">0</button>
+                      <button onClick={() => handleCalcInput('.')} className="col-span-1 bg-white text-gray-800 font-bold text-2xl active:bg-gray-100 flex items-center justify-center border-r border-gray-200">.</button>
+                      <button onClick={() => handleCalcInput('OK')} className="col-span-2 bg-black text-white font-bold text-xl active:bg-gray-800 flex items-center justify-center">OK</button>
+                  </div>
+                  
+                  {/* Close button (optional, since OK handles it, but good for UX) */}
+                  <button onClick={() => setIsCalculatorOpen(false)} className="absolute top-2 left-2 p-2 text-gray-400 hover:text-gray-600"><X className="w-5 h-5" /></button>
+              </div>
            )}
 
           {/* Header - Fixed Height */}
