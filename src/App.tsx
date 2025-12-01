@@ -4,17 +4,64 @@ import {
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
 
+// --- Type Definitions (TypeScript 核心修正) ---
+interface Transaction {
+  id: number;
+  date: string;
+  category: string;
+  amount: number;
+  type: 'income' | 'expense';
+  tag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative';
+  note: string;
+  groupId?: string;
+  investSource?: 'monthly' | 'cumulative';
+}
+
+interface Budgets {
+  [key: string]: number;
+}
+
+interface StatsData {
+  available: number;
+  savings: number;
+  emergencyCurrent: number;
+  emergencyGoal: number;
+}
+
+interface MonthlyData {
+  income: number;
+  expense: number;
+  actualInvested: number;
+  need: number;
+  want: number;
+  categoryMap: { [key: string]: number };
+}
+
+interface ProcessedMonthData extends MonthlyData {
+  netIncome: number;
+  monthlyMaxInvestable: number;
+  monthlyRemainingInvestable: number;
+  cumulativeAddOnAvailable: number;
+  deficitDeducted: number;
+  accumulatedDeficit: number;
+  savings: number;
+  emergencyFund: number;
+  divertedToEmergency: number;
+  emergencyGoal: number;
+  budgetSource: string;
+}
+
 // --- 色彩配置 ---
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
 // --- 初始資料 ---
-const INITIAL_TRANSACTIONS = [];
-const INITIAL_BUDGETS = {};
-const INITIAL_STATS_DATA = {
+const INITIAL_TRANSACTIONS: Transaction[] = []; // Explicit type
+const INITIAL_BUDGETS: Budgets = {};
+const INITIAL_STATS_DATA: StatsData = {
   available: 0, 
   savings: 0,
-  emergencyCurrent: 0, // 初始緊急預備金
-  emergencyGoal: 60000 // 預設緊急預備金目標 (例如6個月生活費)
+  emergencyCurrent: 0, 
+  emergencyGoal: 60000 
 };
 
 const CATEGORIES = [
@@ -34,7 +81,7 @@ export default function App() {
     }
     meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content');
 
-    const preventPinch = (e) => {
+    const preventPinch = (e: Event) => {
       e.preventDefault();
     };
 
@@ -46,7 +93,7 @@ export default function App() {
   }, []);
 
   // --- State Initialization ---
-  const [transactions, setTransactions] = useState(() => {
+  const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
       const saved = localStorage.getItem('yupao_transactions_v2');
       return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
@@ -55,10 +102,9 @@ export default function App() {
     }
   });
   
-  const [initialStats, setInitialStats] = useState(() => {
+  const [initialStats, setInitialStats] = useState<StatsData>(() => {
     try {
       const saved = localStorage.getItem('yupao_stats_v2');
-      // 兼容舊資料，確保有 emergency 欄位
       const parsed = saved ? JSON.parse(saved) : INITIAL_STATS_DATA;
       return { ...INITIAL_STATS_DATA, ...parsed };
     } catch (e) {
@@ -66,7 +112,7 @@ export default function App() {
     }
   });
 
-  const [budgets, setBudgets] = useState(() => {
+  const [budgets, setBudgets] = useState<Budgets>(() => {
     try {
       const saved = localStorage.getItem('yupao_budgets_v2');
       return saved ? JSON.parse(saved) : INITIAL_BUDGETS;
@@ -88,7 +134,7 @@ export default function App() {
   }, [budgets]);
 
 
-  const [deleteModal, setDeleteModal] = useState({ show: false, id: null });
+  const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
 
   const availableMonths = useMemo(() => {
@@ -109,20 +155,20 @@ export default function App() {
     category: '飲食',
     amount: '',
     note: '',
-    tag: 'need', 
-    type: 'expense',
+    tag: 'need' as 'need' | 'want' | 'income', 
+    type: 'expense' as 'income' | 'expense',
     isInstallment: false, 
     installmentCount: 3,  
     installmentCalcType: 'total',
     perMonthInput: '',
-    investSource: 'monthly'
+    investSource: 'monthly' as 'monthly' | 'cumulative'
   });
   
-  const [editingId, setEditingId] = useState(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
 
-  // --- 核心邏輯計算 (包含緊急預備金瀑布流) ---
+  // --- 核心邏輯計算 ---
   const stats = useMemo(() => {
-    let monthlyRawData = {};
+    let monthlyRawData: { [key: string]: MonthlyData } = {};
     
     availableMonths.forEach(m => {
         monthlyRawData[m] = { 
@@ -166,20 +212,20 @@ export default function App() {
     let accumulatedDeficit = 0;
     let cumulativeInvestable = initialStats.available; 
     let cumulativeSavings = initialStats.savings;
-    let runningEmergencyFund = initialStats.emergencyCurrent || 0; // 緊急預備金水位
+    let runningEmergencyFund = initialStats.emergencyCurrent || 0; 
     const emergencyGoal = initialStats.emergencyGoal || 60000;
     
     let carryOverBudget = 0; 
-    let processedMonthsData = {};
+    let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     sortedMonthsAsc.forEach(month => {
       const { income, expense, actualInvested, categoryMap, need, want } = monthlyRawData[month];
       const netIncome = income - expense;
       
-      let monthlyMaxInvestable = carryOverBudget; // 這是上個月的 90% 盈餘
+      let monthlyMaxInvestable = carryOverBudget; 
       
-      let surplusForNextMonth = 0; // 這是本月產生的 90% 潛在盈餘
-      let currentMonthSavingsAddon = 0; // 這是本月產生的 10% 潛在存款
+      let surplusForNextMonth = 0; 
+      let currentMonthSavingsAddon = 0; 
       let deficitDeducted = 0; 
       
       // 1. 計算本月盈餘分配 (先處理赤字)
@@ -189,7 +235,6 @@ export default function App() {
            let realSurplus = netIncome - accumulatedDeficit;
            accumulatedDeficit = 0; 
             
-           // 潛在分配：尚未考慮緊急預備金
            surplusForNextMonth = realSurplus * 0.9;
            currentMonthSavingsAddon = realSurplus * 0.1;
         } else {
@@ -209,12 +254,12 @@ export default function App() {
       const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
 
       if (emergencyGap > 0) {
-        // Priority A: 從 "新增加碼資金 (surplusForNextMonth)" 扣
+        // Priority A: 從 "新增加碼資金" 扣
         const takeFromInvest = Math.min(surplusForNextMonth, emergencyGap);
         surplusForNextMonth -= takeFromInvest;
         divertedToEmergency += takeFromInvest;
         
-        // Priority B: 如果還不夠，從 "現金存款 (currentMonthSavingsAddon)" 扣
+        // Priority B: 如果還不夠，從 "現金存款" 扣
         const remainingGap = emergencyGap - takeFromInvest;
         if (remainingGap > 0) {
             const takeFromSavings = Math.min(currentMonthSavingsAddon, remainingGap);
@@ -223,35 +268,11 @@ export default function App() {
         }
       }
 
-      // 更新各個水庫
       runningEmergencyFund += divertedToEmergency;
       cumulativeSavings += currentMonthSavingsAddon;
       
-      // cumulativeInvestable 計算：上個月結轉進來的預算 + 本月新增(被預備金扣過後) - 實際投入
-      // 注意：這裡的 monthlyMaxInvestable 是指「月初時」可用的（來自上個月）。
-      // 本月產生的 surplusForNextMonth 是下個月才變成 monthlyMaxInvestable。
-      // 但我們為了顯示「累積可加碼」，需要把本月的變化也算進去
-      
-      // 修正邏輯：
-      // cumulativeInvestable 變化 = + (本月預算來源，即上月盈餘) - (本月實際投資)
-      // *注意*：surplusForNextMonth 是「下個月的預算」，不影響「目前累積」。
-      // 但為了讓使用者看到「加上這個月盈餘後」的總額，我們通常在 UI 顯示的是預測值。
-      // 在此邏輯中，cumulativeInvestable 嚴格定義為「已經入帳可隨時動用的」。
-      // 所以本月產生的 surplusForNextMonth 其實是加到 *下個月* 的 monthlyMaxInvestable。
-      
-      // 簡化模型：cumulativeInvestable 隨時包含所有歷史剩下的錢。
-      // 當月變化 = +carryOverBudget (上月給的) - actualInvested
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
-      
-      // 將本月產生的剩餘盈餘 (被預備金扣完後) 放入 carryOverBudget 帶給下個月
       carryOverBudget = surplusForNextMonth;
-      
-      // 如果要即時顯示「如果我現在把本月盈餘也算進去」，我們可以另外算一個欄位，
-      // 但標準邏輯是本月盈餘下月用。這裡為了讓數字好看，我們在 investment view 顯示的是 cumulativeAddOnAvailable (包含歷史結餘)。
-      
-      // 為了修正一個常見的期待：使用者通常覺得「這個月省下的錢，現在就是我的資產了」。
-      // 所以我們把 surplusForNextMonth 也加進 cumulativeAddOnAvailable 供顯示，但在下個月計算時不要重複加。
-      // (這裡保持原邏輯：carryOverBudget 是流動變數，cumulative 是存量)
 
       processedMonthsData[month] = {
           income,
@@ -263,14 +284,12 @@ export default function App() {
           want, 
           monthlyMaxInvestable,
           monthlyRemainingInvestable: monthlyMaxInvestable - actualInvested,
-          // 這裡的 cumulative 包含了直到「上個月底」的餘額 + 本月原本可用的額度 - 本月已用
-          // 我們通常也會想加上「本月剛產生的盈餘(surplusForNextMonth)」，這樣才像「當下總資產」
           cumulativeAddOnAvailable: cumulativeInvestable + surplusForNextMonth, 
           deficitDeducted, 
           accumulatedDeficit, 
           savings: cumulativeSavings,
-          emergencyFund: runningEmergencyFund, // 當下緊急預備金總額
-          divertedToEmergency, // 本月貢獻給緊急預備金的錢
+          emergencyFund: runningEmergencyFund,
+          divertedToEmergency, 
           emergencyGoal,
           budgetSource: monthlyMaxInvestable > 0 ? 'based_on_prev_surplus' : 'prev_month_deficit_or_zero'
       };
@@ -314,7 +333,7 @@ export default function App() {
     setActiveTab('form');
   };
 
-  const openEditMode = (trans) => {
+  const openEditMode = (trans: Transaction) => {
     setEditingId(trans.id);
     const source = trans.category === '投資' 
                    ? (trans.tag === 'invest_cumulative' ? 'cumulative' : 'monthly') 
@@ -325,7 +344,7 @@ export default function App() {
       category: trans.category, 
       amount: trans.amount.toString(), 
       note: trans.note.replace(/\(\d+\/\d+\)$/, '').trim(), 
-      tag: trans.tag, 
+      tag: trans.tag as 'need' | 'want' | 'income', 
       type: trans.type,
       isInstallment: false, 
       installmentCount: 3,
@@ -339,7 +358,7 @@ export default function App() {
   const handleSave = () => {
     if (!formData.amount) return;
     
-    let finalTag;
+    let finalTag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative';
     if (formData.category === '收入') {
       finalTag = 'income';
     } else if (formData.category === '投資') {
@@ -358,7 +377,7 @@ export default function App() {
     const totalAmount = Number(formData.amount);
     
     if (formData.isInstallment && formData.type === 'expense' && formData.category !== '投資' && formData.installmentCount > 1) {
-       const newTransactions = [];
+       const newTransactions: Transaction[] = [];
        const count = Math.round(formData.installmentCount);
        const perMonthAmount = Math.floor(totalAmount / count);
        const remainder = totalAmount - (perMonthAmount * count);
@@ -383,14 +402,14 @@ export default function App() {
        }
        setTransactions([...newTransactions, ...transactions]);
     } else {
-       const item = { id: baseId, ...formData, tag: finalTag, amount: totalAmount };
+       const item: Transaction = { id: baseId, ...formData, tag: finalTag, amount: totalAmount };
        setTransactions([item, ...transactions]);
     }
     
     setActiveTab('history');
   };
 
-  const requestDelete = (e, id) => { e.stopPropagation(); setDeleteModal({ show: true, id }); };
+  const requestDelete = (e: React.MouseEvent, id: number) => { e.stopPropagation(); setDeleteModal({ show: true, id }); };
   const confirmDelete = () => {
     if (deleteModal.id) {
       setTransactions(transactions.filter(t => t.id !== deleteModal.id));
@@ -398,7 +417,7 @@ export default function App() {
     }
     setDeleteModal({ show: false, id: null });
   };
-  const updateBudget = (category, value) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
+  const updateBudget = (category: string, value: string) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
 
   // --- Views ---
 
@@ -502,15 +521,15 @@ export default function App() {
              <button onClick={() => setActiveTab('settings')} className="text-xs text-blue-600 font-medium">調整預算</button>
           </div>
           
-          {Object.entries(budgets).filter(([_, budget]) => budget > 0).map(([cat, budget]) => {
+          {Object.entries(budgets).filter(([_, budget]) => (budget as number) > 0).map(([cat, budget]) => {
             const currentMonthTransactions = transactions.filter(t => t.date.startsWith(selectedMonth));
             const spent = currentMonthTransactions.filter(t => t.category === cat).reduce((sum, t) => sum + Number(t.amount), 0);
-            const percent = Math.min((spent / budget) * 100, 100);
+            const percent = Math.min((spent / (budget as number)) * 100, 100);
             return (
               <div key={cat} className="mb-4 last:mb-0">
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-gray-600">{cat}</span>
-                  <span className="text-gray-500">{spent.toLocaleString()} / {budget.toLocaleString()}</span>
+                  <span className="text-gray-500">{spent.toLocaleString()} / {(budget as number).toLocaleString()}</span>
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div className={`h-full rounded-full ${percent > 90 ? 'bg-red-500' : 'bg-blue-500'}`} style={{ width: `${percent}%` }}></div>
@@ -526,7 +545,7 @@ export default function App() {
           {stats.dashboard.pieData.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
               <RePieChart>
-                  <Pie data={stats.dashboard.pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={80} paddingAngle={5} dataKey="value" label={({name, value}) => `${name} $${value}`}>
+                  <Pie data={stats.dashboard.pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={80} paddingAngle={5} dataKey="value" label={({name, value}: { name: string, value: number }) => `${name} $${value}`}>
                   {stats.dashboard.pieData.map((entry, index) => ( <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} /> ))}
                   </Pie>
                   <RechartsTooltip />
@@ -707,7 +726,7 @@ export default function App() {
 
   const renderHistoryView = () => {
     const groupedTransactions = transactions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .reduce((groups, t) => {
+      .reduce((groups: { [key: string]: Transaction[] }, t) => {
         const date = new Date(t.date);
         const key = `${date.getFullYear()}年${date.getMonth() + 1}月`;
         if (!groups[key]) groups[key] = [];
@@ -725,7 +744,7 @@ export default function App() {
           <div key={groupName} className="space-y-2">
             <h4 className="text-sm font-bold text-gray-500 pl-2 bg-gray-100 py-1 rounded-lg inline-block">{groupName}</h4>
             <div className="space-y-3">
-              {groupItems.map(t => (
+              {(groupItems as Transaction[]).map(t => (
                 <div key={t.id} onClick={() => openEditMode(t)} className="bg-white p-4 rounded-xl border border-gray-100 flex justify-between items-center active:scale-[0.98] transition cursor-pointer hover:shadow-md group">
                   <div className="flex items-center gap-3 overflow-hidden">
                     <div className={`flex-shrink-0 w-12 h-12 rounded-full flex items-center justify-center ${t.type === 'income' ? 'bg-green-100 text-green-600' : 'bg-red-100 text-red-600'}`}>
@@ -876,7 +895,7 @@ export default function App() {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.5 for Yu-Pao (Emergency Fund Added)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.5 for Yu-Pao (TS Fixed)</p></div>
     </div>
   );
 
