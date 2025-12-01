@@ -79,6 +79,7 @@ export default function App() {
       meta.setAttribute('name', 'viewport');
       document.head.appendChild(meta);
     }
+    // 強制禁止縮放，並設定視口適配
     meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content');
 
     const preventPinch = (e: Event) => {
@@ -895,7 +896,7 @@ export default function App() {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.5 for Yu-Pao (TS Fixed)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.6 for Yu-Pao (UI Fixed)</p></div>
     </div>
   );
 
@@ -910,43 +911,59 @@ export default function App() {
   `;
 
   return (
-    <div className="h-screen h-[100dvh] bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden flex flex-col relative select-none touch-manipulation overscroll-none">
-       {deleteModal.show && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animation-fade-in">
-           <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs transform transition-all scale-100">
-              <div className="flex flex-col items-center text-center mb-4"><div className="w-12 h-12 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-3"><AlertCircle className="w-6 h-6" /></div><h3 className="text-lg font-bold text-gray-900">確定要刪除嗎？</h3><p className="text-sm text-gray-500 mt-1">此動作無法復原。</p></div>
-              <div className="flex gap-3">
-                 <button onClick={() => setDeleteModal({ show: false, id: null })} className="flex-1 py-2.5 rounded-xl text-gray-700 font-bold bg-gray-100 hover:bg-gray-200 transition">取消</button>
-                 <button onClick={confirmDelete} className="flex-1 py-2.5 rounded-xl text-white font-bold bg-red-500 hover:bg-red-600 shadow-lg shadow-red-200 transition">刪除</button>
-              </div>
-           </div>
+    <>
+      <style>{`
+        html, body, #root {
+          height: 100%;
+          overflow: hidden;
+          position: fixed;
+          width: 100%;
+          overscroll-behavior: none;
+        }
+      `}</style>
+
+      {/* Main Container - Fixed to viewport to prevent body scroll */}
+      <div className="fixed inset-0 w-full h-[100dvh] bg-gray-100 flex justify-center items-center overflow-hidden">
+        {/* App Frame */}
+        <div className="w-full max-w-md h-full bg-gray-50 flex flex-col relative shadow-2xl overflow-hidden font-sans text-gray-900 select-none touch-manipulation overscroll-none">
+           {deleteModal.show && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animation-fade-in">
+               <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-xs transform transition-all scale-100">
+                  <div className="flex flex-col items-center text-center mb-4"><div className="w-12 h-12 bg-red-100 text-red-500 rounded-full flex items-center justify-center mb-3"><AlertCircle className="w-6 h-6" /></div><h3 className="text-lg font-bold text-gray-900">確定要刪除嗎？</h3><p className="text-sm text-gray-500 mt-1">此動作無法復原。</p></div>
+                  <div className="flex gap-3">
+                     <button onClick={() => setDeleteModal({ show: false, id: null })} className="flex-1 py-2.5 rounded-xl text-gray-700 font-bold bg-gray-100 hover:bg-gray-200 transition">取消</button>
+                     <button onClick={confirmDelete} className="flex-1 py-2.5 rounded-xl text-white font-bold bg-red-500 hover:bg-red-600 shadow-lg shadow-red-200 transition">刪除</button>
+                  </div>
+               </div>
+            </div>
+           )}
+
+          {/* Header - Fixed Height */}
+          <div className="flex-none bg-white px-6 pt-[calc(env(safe-area-inset-top)+20px)] pb-4 border-b border-gray-100 z-20">
+            <div className="flex justify-between items-center">
+              <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
+            </div>
+          </div>
+
+          {/* Content Area - Scrollable */}
+          <div className={scrollContainerClasses}>
+            {activeTab === 'dashboard' && renderDashboardView()}
+            {activeTab === 'history' && renderHistoryView()}
+            {activeTab === 'form' && renderFormView()}
+            {activeTab === 'investment' && renderInvestmentView()}
+            {activeTab === 'settings' && renderSettingsView()}
+          </div>
+
+          {/* Footer - Fixed Height */}
+          <div className="flex-none bg-white border-t border-gray-200 px-6 pt-4 pb-[calc(env(safe-area-inset-bottom)+20px)] flex justify-between items-center z-30">
+            <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'}`}><PieChart className="w-6 h-6" /><span className="text-[10px] font-medium">總覽</span></button>
+            <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'history' ? 'text-blue-600' : 'text-gray-400'}`}><List className="w-6 h-6" /><span className="text-[10px] font-medium">明細</span></button>
+            <div className="relative -top-6"><button onClick={openAddMode} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-300 hover:scale-105 transition ${activeTab === 'form' && !editingId ? 'bg-black' : 'bg-blue-600'}`}><Plus className={`w-8 h-8 transition-transform ${activeTab === 'form' && !editingId ? 'rotate-45' : ''}`} /></button></div>
+            <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'investment' ? 'text-blue-600' : 'text-gray-400'}`}><TrendingUp className="w-6 h-6" /><span className="text-[10px] font-medium">投資</span></button>
+            <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'settings' ? 'text-blue-600' : 'text-gray-400'}`}><Settings className="w-6 h-6" /><span className="text-[10px] font-medium">設定</span></button>
+          </div>
         </div>
-       )}
-
-      {/* Header */}
-      <div className="flex-none bg-white px-6 pt-[calc(env(safe-area-inset-top)+20px)] pb-4 border-b border-gray-100 z-20">
-        <div className="flex justify-between items-center">
-          <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
-        </div>
       </div>
-
-      {/* Content Area */}
-      <div className={scrollContainerClasses}>
-        {activeTab === 'dashboard' && renderDashboardView()}
-        {activeTab === 'history' && renderHistoryView()}
-        {activeTab === 'form' && renderFormView()}
-        {activeTab === 'investment' && renderInvestmentView()}
-        {activeTab === 'settings' && renderSettingsView()}
-      </div>
-
-      {/* Footer */}
-      <div className="flex-none bg-white border-t border-gray-200 px-6 pt-4 pb-[calc(env(safe-area-inset-bottom)+20px)] flex justify-between items-center z-30">
-        <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'}`}><PieChart className="w-6 h-6" /><span className="text-[10px] font-medium">總覽</span></button>
-        <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'history' ? 'text-blue-600' : 'text-gray-400'}`}><List className="w-6 h-6" /><span className="text-[10px] font-medium">明細</span></button>
-        <div className="relative -top-6"><button onClick={openAddMode} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-lg shadow-blue-300 hover:scale-105 transition ${activeTab === 'form' && !editingId ? 'bg-black' : 'bg-blue-600'}`}><Plus className={`w-8 h-8 transition-transform ${activeTab === 'form' && !editingId ? 'rotate-45' : ''}`} /></button></div>
-        <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'investment' ? 'text-blue-600' : 'text-gray-400'}`}><TrendingUp className="w-6 h-6" /><span className="text-[10px] font-medium">投資</span></button>
-        <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'settings' ? 'text-blue-600' : 'text-gray-400'}`}><Settings className="w-6 h-6" /><span className="text-[10px] font-medium">設定</span></button>
-      </div>
-    </div>
+    </>
   );
 }
