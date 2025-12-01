@@ -1,57 +1,19 @@
 import React, { useState, useMemo, useEffect } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Wallet, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, Download, Upload, Coffee, CheckCircle } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
 
 // --- Type Definitions ---
-interface Transaction {
-  id: number;
-  date: string;
-  category: string;
-  amount: number;
-  type: 'income' | 'expense';
-  tag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative'; // 擴展 tag 的定義
-  note: string;
-  groupId?: string;
-}
-
-interface Budgets {
-  [key: string]: number;
-}
-
-interface StatsData {
-  available: number;
-  savings: number;
-}
-
-interface MonthlyData {
-  income: number;
-  expense: number;
-  actualInvested: number;
-  categoryMap: { [key: string]: number };
-}
-
-interface ProcessedMonthData extends MonthlyData {
-  netIncome: number;
-  monthlyMaxInvestable: number;
-  monthlyRemainingInvestable: number;
-  cumulativeAddOnAvailable: number;
-  deficitDeducted: number;
-  accumulatedDeficit: number;
-  savings: number;
-  budgetSource: string;
-}
+// interface Transaction { ... } (Removed TS interfaces for pure JS/React environment compatibility if needed, but keeping logic consistent)
 
 // --- 色彩配置 ---
 const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
-// --- 初始資料 (已清空，保留你的設定) ---
-const INITIAL_TRANSACTIONS: Transaction[] = [];
-
-const INITIAL_BUDGETS: Budgets = {};
-
-const INITIAL_STATS_DATA: StatsData = {
+// --- 初始資料 ---
+const INITIAL_TRANSACTIONS = [];
+const INITIAL_BUDGETS = {};
+const INITIAL_STATS_DATA = {
   available: 0, 
   savings: 0,   
 };
@@ -60,47 +22,32 @@ const CATEGORIES = [
   '房租', '飲食', '交通', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療', '收入'
 ];
 
-export default function App(): JSX.Element {
+export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   
-  // --- iOS App-Like Behavior Hook (強效版) ---
+  // --- iOS App-Like Behavior Hook ---
   useEffect(() => {
-    // 1. 強制設定 Meta Viewport
     let meta = document.querySelector('meta[name="viewport"]');
     if (!meta) {
       meta = document.createElement('meta');
       meta.setAttribute('name', 'viewport');
       document.head.appendChild(meta);
     }
-    // 加入 interactive-widget=resizes-content 防止鍵盤把畫面頂上去導致跑版
     meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content');
 
-    // 2. 暴力禁止 iOS Safari 的縮放手勢 (Pinch)
-    const preventPinch = (e: Event) => {
+    const preventPinch = (e) => {
       e.preventDefault();
     };
 
-    // 3. 禁止雙擊縮放
-    let lastTouchEnd = 0;
-    const preventDoubleTapZoom = (e: TouchEvent) => {
-      const now = (new Date()).getTime();
-      if (now - lastTouchEnd <= 300) {
-        e.preventDefault();
-      }
-      lastTouchEnd = now;
-    };
-
     document.addEventListener('gesturestart', preventPinch, { passive: false });
-    // document.addEventListener('touchend', preventDoubleTapZoom, { passive: false }); 
 
     return () => {
       document.removeEventListener('gesturestart', preventPinch);
-      // document.removeEventListener('touchend', preventDoubleTapZoom);
     };
   }, []);
 
   // --- State Initialization ---
-  const [transactions, setTransactions] = useState<Transaction[]>(() => {
+  const [transactions, setTransactions] = useState(() => {
     try {
       const saved = localStorage.getItem('yupao_transactions_v2');
       return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
@@ -109,7 +56,7 @@ export default function App(): JSX.Element {
     }
   });
   
-  const [initialStats, setInitialStats] = useState<StatsData>(() => {
+  const [initialStats, setInitialStats] = useState(() => {
     try {
       const saved = localStorage.getItem('yupao_stats_v2');
       return saved ? JSON.parse(saved) : INITIAL_STATS_DATA;
@@ -118,7 +65,7 @@ export default function App(): JSX.Element {
     }
   });
 
-  const [budgets, setBudgets] = useState<Budgets>(() => {
+  const [budgets, setBudgets] = useState(() => {
     try {
       const saved = localStorage.getItem('yupao_budgets_v2');
       return saved ? JSON.parse(saved) : INITIAL_BUDGETS;
@@ -140,8 +87,7 @@ export default function App(): JSX.Element {
   }, [budgets]);
 
 
-  const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
-
+  const [deleteModal, setDeleteModal] = useState({ show: false, id: null });
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
 
   const availableMonths = useMemo(() => {
@@ -162,48 +108,60 @@ export default function App(): JSX.Element {
     category: '飲食',
     amount: '',
     note: '',
-    tag: 'need' as 'need' | 'want' | 'income', 
-    type: 'expense' as 'income' | 'expense',
+    tag: 'need', 
+    type: 'expense',
     isInstallment: false, 
     installmentCount: 3,  
     installmentCalcType: 'total',
     perMonthInput: '',
-    // FIX: 新增投資資金來源選項
-    investSource: 'monthly' as 'monthly' | 'cumulative'
+    investSource: 'monthly'
   });
   
-  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState(null);
 
   // --- 核心邏輯計算 ---
   const stats = useMemo(() => {
-    let monthlyRawData: { [key: string]: MonthlyData } = {};
+    let monthlyRawData = {};
     
     availableMonths.forEach(m => {
-        monthlyRawData[m] = { income: 0, expense: 0, actualInvested: 0, categoryMap: {} };
+        monthlyRawData[m] = { 
+          income: 0, 
+          expense: 0, 
+          actualInvested: 0, 
+          need: 0, // 新增：需要花費
+          want: 0, // 新增：想要花費
+          categoryMap: {} 
+        };
     });
 
     transactions.forEach(t => {
       const monthKey = t.date.substring(0, 7);
       if (!monthlyRawData[monthKey]) {
-          monthlyRawData[monthKey] = { income: 0, expense: 0, actualInvested: 0, categoryMap: {} };
+          monthlyRawData[monthKey] = { income: 0, expense: 0, actualInvested: 0, need: 0, want: 0, categoryMap: {} };
       }
 
       if (t.category === '收入') {
         monthlyRawData[monthKey].income += Number(t.amount);
       } else if (t.category === '投資') {
-         // 投資不論來源，都計入實際投入金額
          monthlyRawData[monthKey].actualInvested += Number(t.amount);
          
-         // FIX: 只有標記為 'invest_monthly' 的投資才計入 expense (影響淨收支/下月額度)
          if (t.tag === 'invest_monthly') {
              monthlyRawData[monthKey].expense += Number(t.amount);
          }
-         // 若是 'invest_cumulative' 則不計入 expense，直接從累積資金池中扣除 (這是 cumulativeInvestable 核心邏輯處理的)
       } else {
-        // 一般支出
-        monthlyRawData[monthKey].expense += Number(t.amount);
+        // 一般消費支出
+        const amount = Number(t.amount);
+        monthlyRawData[monthKey].expense += amount;
+        
+        // 計算 Need / Want (排除投資)
+        if (t.tag === 'need') {
+          monthlyRawData[monthKey].need += amount;
+        } else if (t.tag === 'want') {
+          monthlyRawData[monthKey].want += amount;
+        }
+
         if (!monthlyRawData[monthKey].categoryMap[t.category]) monthlyRawData[monthKey].categoryMap[t.category] = 0;
-        monthlyRawData[monthKey].categoryMap[t.category] += Number(t.amount);
+        monthlyRawData[monthKey].categoryMap[t.category] += amount;
       }
     });
 
@@ -214,10 +172,10 @@ export default function App(): JSX.Element {
     let cumulativeSavings = initialStats.savings;
     let carryOverBudget = 0; 
 
-    let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
+    let processedMonthsData = {};
 
     sortedMonthsAsc.forEach(month => {
-      const { income, expense, actualInvested, categoryMap } = monthlyRawData[month];
+      const { income, expense, actualInvested, categoryMap, need, want } = monthlyRawData[month];
       const netIncome = income - expense;
       
       let monthlyMaxInvestable = carryOverBudget;
@@ -248,7 +206,6 @@ export default function App(): JSX.Element {
 
       cumulativeSavings += currentMonthSavingsAddon;
       
-      // cumulativeInvestable 處理：這裡會把當月所有 actualInvested 扣掉
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
       
       carryOverBudget = surplusForNextMonth;
@@ -259,6 +216,8 @@ export default function App(): JSX.Element {
           netIncome,
           categoryMap,
           actualInvested,
+          need, // 傳遞數據
+          want, // 傳遞數據
           monthlyMaxInvestable,
           monthlyRemainingInvestable: monthlyMaxInvestable - actualInvested,
           cumulativeAddOnAvailable: cumulativeInvestable,
@@ -270,7 +229,7 @@ export default function App(): JSX.Element {
     });
 
     const currentData = processedMonthsData[selectedMonth] || {
-        income: 0, expense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0,
+        income: 0, expense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, need: 0, want: 0,
         monthlyMaxInvestable: 0, monthlyRemainingInvestable: 0, cumulativeAddOnAvailable: cumulativeInvestable,
         deficitDeducted: 0, accumulatedDeficit: 0, savings: cumulativeSavings, budgetSource: 'no_data'
     };
@@ -300,14 +259,13 @@ export default function App(): JSX.Element {
       installmentCount: 3,  
       installmentCalcType: 'total',
       perMonthInput: '',
-      investSource: 'monthly' // 預設為當月
+      investSource: 'monthly' 
     });
     setActiveTab('form');
   };
 
-  const openEditMode = (trans: Transaction) => {
+  const openEditMode = (trans) => {
     setEditingId(trans.id);
-    // 編輯時，如果是投資，根據 tag 判斷來源
     const source = trans.category === '投資' 
                    ? (trans.tag === 'invest_cumulative' ? 'cumulative' : 'monthly') 
                    : 'monthly';
@@ -317,7 +275,7 @@ export default function App(): JSX.Element {
       category: trans.category, 
       amount: trans.amount.toString(), 
       note: trans.note.replace(/\(\d+\/\d+\)$/, '').trim(), 
-      tag: trans.tag as 'need' | 'want' | 'income', 
+      tag: trans.tag, 
       type: trans.type,
       isInstallment: false, 
       installmentCount: 3,
@@ -331,8 +289,7 @@ export default function App(): JSX.Element {
   const handleSave = () => {
     if (!formData.amount) return;
     
-    // 根據分類和來源決定最終的 tag
-    let finalTag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative';
+    let finalTag;
     if (formData.category === '收入') {
       finalTag = 'income';
     } else if (formData.category === '投資') {
@@ -351,7 +308,7 @@ export default function App(): JSX.Element {
     const totalAmount = Number(formData.amount);
     
     if (formData.isInstallment && formData.type === 'expense' && formData.category !== '投資' && formData.installmentCount > 1) {
-       const newTransactions: Transaction[] = [];
+       const newTransactions = [];
        const count = Math.round(formData.installmentCount);
        const perMonthAmount = Math.floor(totalAmount / count);
        const remainder = totalAmount - (perMonthAmount * count);
@@ -371,19 +328,19 @@ export default function App(): JSX.Element {
              amount: currentAmount,
              note: `${formData.note} (${i + 1}/${count})`,
              groupId: `group_${baseId}`,
-             tag: finalTag, // 確保分期付款也繼承了正確的 tag
+             tag: finalTag, 
           });
        }
        setTransactions([...newTransactions, ...transactions]);
     } else {
-       const item: Transaction = { id: baseId, ...formData, tag: finalTag, amount: totalAmount };
+       const item = { id: baseId, ...formData, tag: finalTag, amount: totalAmount };
        setTransactions([item, ...transactions]);
     }
     
     setActiveTab('history');
   };
 
-  const requestDelete = (e: React.MouseEvent, id: number) => { e.stopPropagation(); setDeleteModal({ show: true, id }); };
+  const requestDelete = (e, id) => { e.stopPropagation(); setDeleteModal({ show: true, id }); };
   const confirmDelete = () => {
     if (deleteModal.id) {
       setTransactions(transactions.filter(t => t.id !== deleteModal.id));
@@ -391,9 +348,9 @@ export default function App(): JSX.Element {
     }
     setDeleteModal({ show: false, id: null });
   };
-  const updateBudget = (category: string, value: string) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
+  const updateBudget = (category, value) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
 
-  // --- Render Functions ---
+  // --- Views ---
 
   const renderDashboardView = () => (
     <div className="space-y-6">
@@ -429,6 +386,42 @@ export default function App(): JSX.Element {
             <p className="font-semibold text-red-300">-{stats.dashboard.expense.toLocaleString()}</p>
           </div>
         </div>
+      </div>
+
+      {/* 新增：Need vs Want 區塊 */}
+      <div className="grid grid-cols-2 gap-4">
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-28 relative overflow-hidden">
+             <div className="relative z-10">
+               <div className="flex items-center gap-1.5 mb-1 text-gray-500">
+                  <CheckCircle className="w-4 h-4" />
+                  <span className="text-xs font-bold">需要 (Need)</span>
+               </div>
+               <p className="text-xl font-bold text-gray-800">${stats.dashboard.need.toLocaleString()}</p>
+             </div>
+             <div className="h-1.5 w-full bg-gray-100 rounded-full mt-2 overflow-hidden relative z-10">
+                 {/* 這裡的進度條如果是 100% 代表佔總支出的比例 */}
+                 <div className="h-full bg-gray-500 rounded-full" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.need / stats.dashboard.expense * 100) : 0}%` }}></div>
+             </div>
+             <div className="absolute -right-3 -bottom-3 text-gray-100 opacity-50 z-0">
+                <CheckCircle className="w-20 h-20" />
+             </div>
+          </div>
+          
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between h-28 relative overflow-hidden">
+             <div className="relative z-10">
+               <div className="flex items-center gap-1.5 mb-1 text-yellow-600">
+                  <Coffee className="w-4 h-4" />
+                  <span className="text-xs font-bold">想要 (Want)</span>
+               </div>
+               <p className="text-xl font-bold text-gray-800">${stats.dashboard.want.toLocaleString()}</p>
+             </div>
+             <div className="h-1.5 w-full bg-yellow-50 rounded-full mt-2 overflow-hidden relative z-10">
+                 <div className="h-full bg-yellow-400 rounded-full" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.want / stats.dashboard.expense * 100) : 0}%` }}></div>
+             </div>
+             <div className="absolute -right-3 -bottom-3 text-yellow-50 opacity-50 z-0">
+                <Coffee className="w-20 h-20" />
+             </div>
+          </div>
       </div>
 
       <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
@@ -500,7 +493,6 @@ export default function App(): JSX.Element {
             </div>
           </div>
            
-          {/* 分期付款開關 */}
           {formData.type === 'expense' && formData.category !== '投資' && !editingId && (
               <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 transition-all">
                  <label className="flex items-center justify-between cursor-pointer mb-2">
@@ -591,12 +583,10 @@ export default function App(): JSX.Element {
           <div>
             <label className="text-xs text-gray-500 mb-1 block font-medium">分類</label>
             <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} className="w-full bg-gray-50 rounded-xl p-3 text-base focus:outline-blue-500">
-              {/* 1. 移除 (轉出) */}
               {formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資</option></>}
             </select>
           </div>
           
-          {/* 投資資金來源選項 */}
           {formData.type === 'expense' && formData.category === '投資' && (
              <div className="bg-indigo-50 p-3 rounded-xl border border-indigo-100 flex flex-col gap-2">
                 <p className="text-xs font-bold text-indigo-700">選擇資金來源</p>
@@ -609,7 +599,6 @@ export default function App(): JSX.Element {
                         className="w-4 h-4 text-indigo-600 focus:ring-indigo-500" 
                     />
                     <div className="flex flex-col">
-                        {/* 2. 修正名稱 */}
                         <span className={formData.investSource === 'monthly' ? 'font-bold text-indigo-800' : ''}>當月新增可投資額度</span>
                         <span className="text-xs text-gray-500">計入本月淨支出。</span>
                     </div>
@@ -654,7 +643,7 @@ export default function App(): JSX.Element {
         if (!groups[key]) groups[key] = [];
         groups[key].push(t);
         return groups;
-      }, {} as { [key: string]: Transaction[] });
+      }, {});
 
     return (
       <div className="space-y-6">
@@ -799,21 +788,17 @@ export default function App(): JSX.Element {
     </div>
   );
 
-  // 判斷哪些 Tab 需要捲動
-  // FIX: 將 'settings' 重新加入需要捲動的清單中
   const needsScrolling = activeTab === 'dashboard' || activeTab === 'history' || activeTab === 'form' || activeTab === 'settings';
   
-  // 設置 Content Area 的 class
   const scrollContainerClasses = `
     flex-1 relative p-4 
     ${needsScrolling 
-        ? 'overflow-y-auto hide-scrollbar pb-32' // 需要捲動的 Tab 獲得 auto-scroll 和底部大留白
-        : 'overflow-hidden' // 內容短的 Tab (e.g., Investment) 鎖定捲動
+        ? 'overflow-y-auto hide-scrollbar pb-32'
+        : 'overflow-hidden'
     }
   `;
 
   return (
-    // FIX: 使用 h-[100dvh] 確保在行動裝置上高度正確，解決被瀏覽器工具列遮擋的問題
     <div className="h-screen h-[100dvh] bg-gray-50 font-sans text-gray-900 max-w-md mx-auto shadow-2xl overflow-hidden flex flex-col relative select-none touch-manipulation overscroll-none">
        {deleteModal.show && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animation-fade-in">
@@ -827,16 +812,14 @@ export default function App(): JSX.Element {
         </div>
        )}
 
-      {/* Header: Fixed and adapted with safe-area-inset-top */}
-      {/* 修正：使用 env(safe-area-inset-top) 自動適應劉海高度，並移除右側 Emoji */}
+      {/* Header */}
       <div className="flex-none bg-white px-6 pt-[calc(env(safe-area-inset-top)+20px)] pb-4 border-b border-gray-100 z-20">
         <div className="flex justify-between items-center">
           <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
-          {/* Emoji removed */}
         </div>
       </div>
 
-      {/* Content Area: Only content scrolls IF needed */}
+      {/* Content Area */}
       <div className={scrollContainerClasses}>
         {activeTab === 'dashboard' && renderDashboardView()}
         {activeTab === 'history' && renderHistoryView()}
@@ -845,8 +828,7 @@ export default function App(): JSX.Element {
         {activeTab === 'settings' && renderSettingsView()}
       </div>
 
-      {/* Footer: Adapted with safe-area-inset-bottom */}
-      {/* 修正：使用 env(safe-area-inset-bottom) 自動適應底部白條高度 */}
+      {/* Footer */}
       <div className="flex-none bg-white border-t border-gray-200 px-6 pt-4 pb-[calc(env(safe-area-inset-bottom)+20px)] flex justify-between items-center z-30">
         <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'dashboard' ? 'text-blue-600' : 'text-gray-400'}`}><PieChart className="w-6 h-6" /><span className="text-[10px] font-medium">總覽</span></button>
         <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 transition ${activeTab === 'history' ? 'text-blue-600' : 'text-gray-400'}`}><List className="w-6 h-6" /><span className="text-[10px] font-medium">明細</span></button>
