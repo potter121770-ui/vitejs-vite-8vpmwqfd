@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
@@ -15,6 +15,8 @@ interface Transaction {
   note: string;
   groupId?: string;
   investSource?: 'monthly' | 'cumulative';
+  fromSavings?: boolean; // Expense: Paid from savings
+  isAssetLiquidation?: boolean; // Income: Direct to savings (e.g. selling camera)
 }
 
 interface Budgets {
@@ -30,8 +32,10 @@ interface StatsData {
 }
 
 interface MonthlyData {
-  income: number;
-  expense: number;
+  income: number;          // Regular income
+  assetLiquidation: number; // Income from selling assets
+  expense: number;         // Regular expenses
+  savingsExpense: number;  // Expenses paid from savings
   actualInvested: number;
   need: number;
   want: number;
@@ -43,8 +47,8 @@ interface ProcessedMonthData extends MonthlyData {
   monthlyMaxInvestable: number;
   monthlyRemainingInvestable: number;
   cumulativeAddOnAvailable: number;
-  deficitDeducted: number;
-  accumulatedDeficit: number;
+  deficitDeducted: number; // Deficit deducted from capital immediately
+  accumulatedDeficit: number; // Kept for legacy compatibility, but logic changed to strict
   savings: number;
   emergencyFund: number;
   divertedToEmergency: number;
@@ -196,7 +200,9 @@ export default function App() {
     installmentCount: '3', 
     installmentCalcType: 'total' as 'total' | 'monthly', 
     perMonthInput: '',
-    investSource: 'monthly' as 'monthly' | 'cumulative'
+    investSource: 'monthly' as 'monthly' | 'cumulative',
+    fromSavings: false, 
+    isAssetLiquidation: false, // New field
   });
   
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -278,7 +284,9 @@ export default function App() {
     availableMonths.forEach(m => {
         monthlyRawData[m] = { 
           income: 0, 
+          assetLiquidation: 0,
           expense: 0, 
+          savingsExpense: 0, 
           actualInvested: 0, 
           need: 0, 
           want: 0, 
@@ -289,11 +297,16 @@ export default function App() {
     transactions.forEach(t => {
       const monthKey = t.date.substring(0, 7);
       if (!monthlyRawData[monthKey]) {
-          monthlyRawData[monthKey] = { income: 0, expense: 0, actualInvested: 0, need: 0, want: 0, categoryMap: {} };
+          monthlyRawData[monthKey] = { income: 0, assetLiquidation: 0, expense: 0, savingsExpense: 0, actualInvested: 0, need: 0, want: 0, categoryMap: {} };
       }
 
       if (t.category === '收入') {
-        monthlyRawData[monthKey].income += Number(t.amount);
+        // Logic Update 1: Separate regular income from asset liquidation
+        if (t.isAssetLiquidation) {
+            monthlyRawData[monthKey].assetLiquidation += Number(t.amount);
+        } else {
+            monthlyRawData[monthKey].income += Number(t.amount);
+        }
       } else if (t.category === '投資') {
          monthlyRawData[monthKey].actualInvested += Number(t.amount);
          
@@ -302,10 +315,14 @@ export default function App() {
          }
       } else {
         const amount = Number(t.amount);
-        monthlyRawData[monthKey].expense += amount;
         
-        if (t.tag === 'need') monthlyRawData[monthKey].need += amount;
-        else if (t.tag === 'want') monthlyRawData[monthKey].want += amount;
+        if (t.fromSavings) {
+            monthlyRawData[monthKey].savingsExpense += amount;
+        } else {
+            monthlyRawData[monthKey].expense += amount;
+            if (t.tag === 'need') monthlyRawData[monthKey].need += amount;
+            else if (t.tag === 'want') monthlyRawData[monthKey].want += amount;
+        }
 
         if (!monthlyRawData[monthKey].categoryMap[t.category]) monthlyRawData[monthKey].categoryMap[t.category] = 0;
         monthlyRawData[monthKey].categoryMap[t.category] += amount;
@@ -324,73 +341,68 @@ export default function App() {
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     sortedMonthsAsc.forEach(month => {
-      const { income, expense, actualInvested, categoryMap, need, want } = monthlyRawData[month];
-      const netIncome = income - expense;
+      const { income, assetLiquidation, expense, savingsExpense, actualInvested, categoryMap, need, want } = monthlyRawData[month];
+      const netIncome = income - expense; 
       
       let monthlyMaxInvestable = carryOverBudget; 
       
-      // 1. Calculate Monthly Flow first
       let surplusForNextMonth = 0; 
       let currentMonthSavingsAddon = 0; 
       let deficitDeducted = 0;
       let divertedToEmergency = 0; 
-      let capitalDivertedToEmergency = 0; // Track amount taken from accumulated capital
+      let capitalDivertedToEmergency = 0; 
 
       // Step A: Handle Monthly Net Income Flow
       if (netIncome > 0) {
-        if (netIncome >= accumulatedDeficit) {
-           deficitDeducted = accumulatedDeficit;
-           let realSurplus = netIncome - accumulatedDeficit;
-           accumulatedDeficit = 0; 
-           
-           // Priority 1: Fill Emergency Fund with Monthly Surplus
-           const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
-           
-           if (emergencyGap > 0) {
-               divertedToEmergency = Math.min(realSurplus, emergencyGap);
-               realSurplus -= divertedToEmergency;
-               runningEmergencyFund += divertedToEmergency;
-           }
-
-           if (realSurplus > 0) {
-               surplusForNextMonth = realSurplus * 0.9;
-               currentMonthSavingsAddon = realSurplus * 0.1;
-           } else {
-               surplusForNextMonth = 0;
-               currentMonthSavingsAddon = 0;
-           }
-
-        } else {
-           deficitDeducted = netIncome;
-           accumulatedDeficit -= netIncome;
-           surplusForNextMonth = 0;
-           currentMonthSavingsAddon = 0; 
+        // Priority 1: Fill Emergency Fund with Monthly Surplus
+        let realSurplus = netIncome;
+        const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
+        
+        if (emergencyGap > 0) {
+            divertedToEmergency = Math.min(realSurplus, emergencyGap);
+            realSurplus -= divertedToEmergency;
+            runningEmergencyFund += divertedToEmergency;
         }
+
+        if (realSurplus > 0) {
+            surplusForNextMonth = realSurplus * 0.9;
+            currentMonthSavingsAddon = realSurplus * 0.1;
+        } else {
+            surplusForNextMonth = 0;
+            currentMonthSavingsAddon = 0;
+        }
+
       } else {
-        accumulatedDeficit += Math.abs(netIncome);
+        // STRICT DEFICIT MODE
+        const deficit = Math.abs(netIncome);
+        deficitDeducted = deficit;
+        cumulativeInvestable -= deficit; 
+        
         surplusForNextMonth = 0;
         currentMonthSavingsAddon = 0;
       }
 
-      cumulativeSavings += currentMonthSavingsAddon;
+      // Step B: Update Savings 
+      cumulativeSavings = cumulativeSavings + currentMonthSavingsAddon + assetLiquidation - savingsExpense;
       
-      // Step B: Calculate Investable Pool
-      // Add new surplus, subtract what was invested this month
+      // Step C: Calculate Investable Pool
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
       carryOverBudget = surplusForNextMonth;
 
-      // Step C: PRIORITY CHECK - Use Accumulated Capital to fill Emergency Gap
+      // Step D: PRIORITY CHECK - Use Accumulated Capital to fill Emergency Gap
       const remainingEmergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
       if (remainingEmergencyGap > 0 && cumulativeInvestable > 0) {
           const transferAmount = Math.min(cumulativeInvestable, remainingEmergencyGap);
           cumulativeInvestable -= transferAmount;
           runningEmergencyFund += transferAmount;
-          capitalDivertedToEmergency = transferAmount; // Log this diversion
+          capitalDivertedToEmergency = transferAmount; 
       }
 
       processedMonthsData[month] = {
           income,
+          assetLiquidation,
           expense,
+          savingsExpense, 
           netIncome,
           categoryMap,
           actualInvested,
@@ -398,19 +410,19 @@ export default function App() {
           want, 
           monthlyMaxInvestable,
           monthlyRemainingInvestable: monthlyMaxInvestable - actualInvested,
-          cumulativeAddOnAvailable: cumulativeInvestable + surplusForNextMonth, // Current pool + incoming
+          cumulativeAddOnAvailable: cumulativeInvestable + surplusForNextMonth, 
           deficitDeducted, 
           accumulatedDeficit, 
           savings: cumulativeSavings,
           emergencyFund: runningEmergencyFund,
-          divertedToEmergency, // From Monthly Income
-          capitalDivertedToEmergency, // From Accumulated Capital
+          divertedToEmergency, 
+          capitalDivertedToEmergency, 
           emergencyGoal
       };
     });
 
     const currentData = processedMonthsData[selectedMonth] || {
-        income: 0, expense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, need: 0, want: 0,
+        income: 0, assetLiquidation: 0, expense: 0, savingsExpense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, need: 0, want: 0,
         monthlyMaxInvestable: carryOverBudget,
         monthlyRemainingInvestable: carryOverBudget - 0, 
         cumulativeAddOnAvailable: cumulativeInvestable,
@@ -443,13 +455,15 @@ export default function App() {
       installmentCount: '3',  
       installmentCalcType: 'total',
       perMonthInput: '',
-      investSource: 'monthly' 
+      investSource: 'monthly',
+      fromSavings: false,
+      isAssetLiquidation: false,
     });
     setActiveTab('form');
   };
 
   const openEditMode = (trans: Transaction) => {
-    if (swipedId === trans.id) return; // Don't open edit if interacting with swipe
+    if (swipedId === trans.id) return; 
     setEditingId(trans.id);
     const source = trans.category === '投資' 
                    ? (trans.tag === 'invest_cumulative' ? 'cumulative' : 'monthly') 
@@ -466,7 +480,9 @@ export default function App() {
       installmentCount: '3', 
       installmentCalcType: 'total',
       perMonthInput: '',
-      investSource: source
+      investSource: source,
+      fromSavings: trans.fromSavings || false,
+      isAssetLiquidation: trans.isAssetLiquidation || false,
     });
     setActiveTab('form');
   };
@@ -485,7 +501,6 @@ export default function App() {
     // 如果輸入框還有未計算的算式，先計算
     let finalAmount = formData.amount;
     try {
-       // Clean trailing operators
        let cleanValue = formData.amount.replace(/[^0-9+\-*/.]/g, '');
        if (['+', '-', '*', '/'].includes(cleanValue.slice(-1))) {
            cleanValue = cleanValue.slice(0, -1);
@@ -530,13 +545,15 @@ export default function App() {
                       category: formData.category,
                       amount: Number(finalAmount),
                       tag: finalTag,
+                      fromSavings: formData.fromSavings,
+                      isAssetLiquidation: formData.isAssetLiquidation,
                   };
               }
               return t;
           });
           setTransactions(updatedTransactions);
       } else {
-          setTransactions(transactions.map(t => t.id === editingId ? { ...t, ...formData, tag: finalTag, amount: Number(finalAmount) } : t));
+          setTransactions(transactions.map(t => t.id === editingId ? { ...t, ...formData, tag: finalTag, amount: Number(finalAmount), fromSavings: formData.fromSavings, isAssetLiquidation: formData.isAssetLiquidation } : t));
       }
       
       setActiveTab('history');
@@ -546,7 +563,9 @@ export default function App() {
     const baseId = transactions.length > 0 ? Math.max(...transactions.map(t => t.id)) + 1 : 1;
     const totalAmount = Number(finalAmount);
     
-    if (formData.isInstallment && formData.type === 'expense' && formData.category !== '投資' && Number(formData.installmentCount) > 1) {
+    const shouldInstallment = !formData.fromSavings && !formData.isAssetLiquidation && formData.isInstallment && formData.type === 'expense' && formData.category !== '投資' && Number(formData.installmentCount) > 1;
+
+    if (shouldInstallment) {
        const newTransactions: Transaction[] = [];
        const count = Math.round(Number(formData.installmentCount));
        const perMonthAmount = Math.floor(totalAmount / count);
@@ -568,7 +587,9 @@ export default function App() {
              amount: currentAmount,
              note: `${formData.note} (${i + 1}/${count})`,
              groupId: groupId, 
-             tag: finalTag, 
+             tag: finalTag,
+             fromSavings: false, 
+             isAssetLiquidation: false,
           });
        }
        setTransactions([...newTransactions, ...transactions]);
@@ -583,7 +604,7 @@ export default function App() {
   const requestDelete = (e: React.MouseEvent | React.TouchEvent, id: number) => { 
       e.stopPropagation(); 
       setDeleteModal({ show: true, id });
-      setSwipedId(null); // Reset swipe state after triggering delete
+      setSwipedId(null); 
   };
   const confirmDelete = () => {
     if (deleteModal.id) {
@@ -606,11 +627,12 @@ export default function App() {
     return (
       <div className="space-y-6 pb-4 pt-2">
         {/* Header Section */}
-        <div className="flex justify-end items-center px-1">
+        <div className="flex justify-start items-center px-1">
             <select 
               value={selectedMonth} 
               onChange={(e) => setSelectedMonth(e.target.value)}
-              className="bg-white text-black font-bold text-sm rounded-lg px-4 py-2 border border-gray-200 outline-none shadow-sm"
+              className="bg-white text-black font-bold text-sm rounded-full px-4 py-2 border border-gray-200 outline-none shadow-sm appearance-none pr-8 relative z-10"
+              style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3e%3c/path%3e%3c/svg%3e")`, backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em' }}
             >
               {availableMonths.map(m => ( <option key={m} value={m}>{m}</option> ))}
             </select>
@@ -706,7 +728,7 @@ export default function App() {
           <div className="space-y-6">
             {Object.entries(budgets).filter(([_, budget]) => (budget as number) > 0).map(([cat, budget]) => {
                 const currentMonthTransactions = transactions.filter(t => t.date.startsWith(selectedMonth));
-                const spent = currentMonthTransactions.filter(t => t.category === cat).reduce((sum, t) => sum + Number(t.amount), 0);
+                const spent = currentMonthTransactions.filter(t => t.category === cat && !t.fromSavings).reduce((sum, t) => sum + Number(t.amount), 0);
                 const percent = Math.min((spent / (budget as number)) * 100, 100);
                 const isOver = spent > (budget as number);
                 
@@ -780,233 +802,294 @@ export default function App() {
     );
   }
 
-  const renderFormView = () => (
-    <div className="space-y-5 pb-20 pt-2">
-      <div className="flex items-center justify-between px-1 mb-2">
-         <button onClick={() => setActiveTab('dashboard')} className="flex items-center text-gray-500 font-medium -ml-2 p-2 hover:bg-gray-100 rounded-lg transition">
-            <ChevronLeft className="w-5 h-5" /> 返回
-         </button>
-         <div className="w-10"></div>
-      </div>
+  const renderFormView = () => {
+    const currentSavings = stats.investment.savings;
+    const isSavingsInsufficient = formData.fromSavings && (Number(formData.amount) > currentSavings);
 
-      <div className="bg-gray-200/60 p-1.5 rounded-xl flex relative">
-         <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white rounded-[10px] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${formData.type === 'expense' ? 'left-1.5' : 'left-[calc(50%+1.5px)]'}`}></div>
-         <button 
-            onClick={() => setFormData({...formData, type: 'expense', category: '飲食', investSource: 'monthly'})} 
-            className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'expense' ? 'text-gray-900' : 'text-gray-500'}`}
-         >
-            支出
-         </button>
-         <button 
-            onClick={() => setFormData({...formData, type: 'income', category: '收入', tag: 'income', investSource: 'monthly'})} 
-            className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'income' ? 'text-gray-900' : 'text-gray-500'}`}
-         >
-            收入
-         </button>
-      </div>
+    return (
+        <div className="space-y-5 pb-20 pt-2">
+        <div className="flex items-center justify-between px-1 mb-2">
+            <button onClick={() => setActiveTab('dashboard')} className="flex items-center text-gray-500 font-medium -ml-2 p-2 hover:bg-gray-100 rounded-lg transition">
+                <ChevronLeft className="w-5 h-5" /> 返回
+            </button>
+            <div className="w-10"></div>
+        </div>
 
-      <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
-          <div className="flex items-center justify-between p-5 border-b border-gray-50">
-             <label className="text-base font-bold text-black">金額</label>
-             <div className="flex-1 ml-4 relative">
-                <input 
-                  type="text"
-                  placeholder="0" 
-                  value={formData.amount} 
-                  readOnly 
-                  onClick={() => openCalculator()}
-                  className={`w-full text-right text-3xl font-bold placeholder-gray-200 bg-transparent outline-none ${formData.installmentCalcType === 'monthly' && formData.isInstallment ? 'text-gray-300 cursor-not-allowed' : 'cursor-pointer text-black'}`}
-                />
-             </div>
-          </div>
-          <div className="flex items-center justify-between p-5 border-b border-gray-50">
-             <label className="text-base font-bold text-black">日期</label>
-             <input 
-                type="date" 
-                value={formData.date} 
-                onChange={e => setFormData({...formData, date: e.target.value})} 
-                className="text-base font-medium text-gray-600 bg-transparent outline-none text-right" 
-             />
-          </div>
-          <div className="flex items-center justify-between p-5">
-             <label className="text-base font-bold text-black">分類</label>
-             <div className="flex items-center gap-2">
-                <select 
-                    value={formData.category} 
-                    onChange={e => setFormData({...formData, category: e.target.value})} 
-                    className="text-base font-medium text-gray-600 bg-transparent outline-none text-right appearance-none"
-                >
-                    {formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資</option></>}
-                </select>
-             </div>
-          </div>
-      </div>
+        <div className="bg-gray-200/60 p-1.5 rounded-xl flex relative">
+            <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white rounded-[10px] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${formData.type === 'expense' ? 'left-1.5' : 'left-[calc(50%+1.5px)]'}`}></div>
+            <button 
+                onClick={() => setFormData({...formData, type: 'expense', category: '飲食', investSource: 'monthly', isAssetLiquidation: false})} 
+                className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'expense' ? 'text-gray-900' : 'text-gray-500'}`}
+            >
+                支出
+            </button>
+            <button 
+                onClick={() => setFormData({...formData, type: 'income', category: '收入', tag: 'income', investSource: 'monthly', fromSavings: false})} 
+                className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'income' ? 'text-gray-900' : 'text-gray-500'}`}
+            >
+                收入
+            </button>
+        </div>
 
-      <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
-          {formData.type === 'expense' && formData.category === '投資' ? (
-             <div className="p-5">
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">資金來源</p>
-                <div className="space-y-4">
-                    <label className="flex items-center justify-between cursor-pointer group">
-                        <span className="text-base font-medium text-gray-900">當月新增額度</span>
-                        <input 
-                            type="radio" 
-                            name="investSource" 
-                            checked={formData.investSource === 'monthly'} 
-                            onChange={() => setFormData({...formData, investSource: 'monthly'})} 
-                            className="w-5 h-5 text-black accent-black" 
-                        />
-                    </label>
-                    <div className="h-px bg-gray-50 w-full ml-4"></div>
-                    <label className="flex items-center justify-between cursor-pointer group">
-                        <span className="text-base font-medium text-black">歷史累積資金</span>
-                        <input 
-                            type="radio" 
-                            name="investSource" 
-                            checked={formData.investSource === 'cumulative'} 
-                            onChange={() => setFormData({...formData, investSource: 'cumulative'})} 
-                            className="w-5 h-5 text-black accent-black" 
-                        />
-                    </label>
+        <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+            <div className="flex items-center justify-between p-5 border-b border-gray-50">
+                <label className="text-base font-bold text-black">金額</label>
+                <div className="flex-1 ml-4 relative">
+                    <input 
+                    type="text"
+                    placeholder="0" 
+                    value={formData.amount} 
+                    readOnly 
+                    onClick={() => openCalculator()}
+                    className={`w-full text-right text-3xl font-bold placeholder-gray-200 bg-transparent outline-none ${formData.installmentCalcType === 'monthly' && formData.isInstallment ? 'text-gray-300 cursor-not-allowed' : 'cursor-pointer text-black'}`}
+                    />
                 </div>
-             </div>
-          ) : formData.type === 'expense' ? (
-             <div className="p-4 flex gap-3">
-                <button 
-                    onClick={() => setFormData({...formData, tag: 'need'})}
-                    className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.tag === 'need' ? 'bg-gray-100 text-black border-gray-200' : 'bg-white text-gray-400 border-gray-200'}`}
-                >
-                    需要 (Need)
-                </button>
-                <button 
-                    onClick={() => setFormData({...formData, tag: 'want'})}
-                    className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.tag === 'want' ? 'bg-[#FDF2F8] text-[#D53F8C] border-[#FBCFE8]' : 'bg-white text-gray-400 border-gray-200'}`}
-                >
-                    想要 (Want)
-                </button>
-             </div>
-          ) : null}
-      </div>
-
-      <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 p-5">
-          <input 
-            type="text" 
-            placeholder="新增備註..." 
-            value={formData.note} 
-            onChange={e => setFormData({...formData, note: e.target.value})} 
-            className="w-full text-base bg-transparent outline-none placeholder-gray-400" 
-          />
-      </div>
-
-      {formData.type === 'expense' && formData.category !== '投資' && !editingId && (
-          <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 p-5">
-             <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-black">
-                        <CreditCard className="w-5 h-5" />
-                    </div>
-                    <span className="text-base font-bold text-gray-900">分期付款自動生成</span>
+            </div>
+            <div className="flex items-center justify-between p-5 border-b border-gray-50 relative">
+                <label className="text-base font-bold text-black">日期</label>
+                <div className="flex-1 ml-4 text-right">
+                    <input 
+                        type="date" 
+                        value={formData.date} 
+                        onChange={e => setFormData({...formData, date: e.target.value})} 
+                        className="text-base font-medium text-gray-600 bg-transparent outline-none text-right appearance-none absolute inset-0 opacity-0 z-10 w-full h-full cursor-pointer" 
+                    />
+                    <span className="text-base font-medium text-gray-600 bg-transparent outline-none text-right pointer-events-none relative z-0">
+                        {formData.date.split('-').join('/')}
+                    </span>
                 </div>
-                <div 
-                    onClick={() => setFormData({...formData, isInstallment: !formData.isInstallment})}
-                    className={`w-12 h-7 rounded-full p-1 cursor-pointer transition-colors duration-300 ease-in-out ${formData.isInstallment ? 'bg-[#34C759]' : 'bg-gray-200'}`}
-                >
-                    <div className={`w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform duration-300 ease-in-out ${formData.isInstallment ? 'translate-x-5' : 'translate-x-0'}`}></div>
+            </div>
+            <div className="flex items-center justify-between p-5">
+                <label className="text-base font-bold text-black">分類</label>
+                <div className="flex items-center gap-2 relative">
+                    <select 
+                        value={formData.category} 
+                        onChange={e => setFormData({...formData, category: e.target.value})} 
+                        className="text-base font-medium text-gray-600 bg-transparent outline-none text-right appearance-none pr-6 relative z-10"
+                        style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3e%3c/path%3e%3c/svg%3e")`, backgroundPosition: 'right center', backgroundRepeat: 'no-repeat', backgroundSize: '1em 1em' }}
+                    >
+                        {formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資</option></>}
+                    </select>
                 </div>
-             </div>
-             
-             {formData.isInstallment && (
-                <div className="mt-5 pt-5 border-t border-gray-50 space-y-4 animate-slide-down">
-                    {/* Calculation Type Toggle */}
-                    <div className="flex bg-gray-100 p-1 rounded-lg mb-4">
-                        <button 
-                            onClick={() => setFormData({...formData, installmentCalcType: 'total'})}
-                            className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${formData.installmentCalcType === 'total' ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}
-                        >
-                            輸入總額 (算每期)
-                        </button>
-                        <button 
-                            onClick={() => setFormData({...formData, installmentCalcType: 'monthly'})}
-                            className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${formData.installmentCalcType === 'monthly' ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}
-                        >
-                            輸入每期 (算總額)
-                        </button>
-                    </div>
+            </div>
+        </div>
 
-                    <div className="grid grid-cols-2 gap-4">
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wide block mb-2">期數 (月)</label>
+        <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
+            {formData.type === 'expense' && formData.category === '投資' ? (
+                <div className="p-5">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">資金來源</p>
+                    <div className="space-y-4">
+                        <label className="flex items-center justify-between cursor-pointer group">
+                            <span className="text-base font-medium text-gray-900">當月新增額度</span>
                             <input 
-                                type="text" 
-                                inputMode="numeric"
-                                pattern="[0-9]*"
-                                value={formData.installmentCount}
-                                onChange={e => {
-                                    const val = e.target.value;
-                                    if (val === '' || /^\d+$/.test(val)) {
-                                        setFormData({
-                                            ...formData, 
-                                            installmentCount: val,
-                                            // Recalculate amount if in monthly mode
-                                            amount: formData.installmentCalcType === 'monthly' && formData.perMonthInput && val ? String(Number(formData.perMonthInput) * Number(val)) : formData.amount
-                                        });
-                                    }
-                                }}
-                                className="w-full bg-gray-50 rounded-xl p-3 text-center font-bold text-black border border-gray-100 focus:border-black outline-none"
+                                type="radio" 
+                                name="investSource" 
+                                checked={formData.investSource === 'monthly'} 
+                                onChange={() => setFormData({...formData, investSource: 'monthly'})} 
+                                className="w-5 h-5 text-black accent-black" 
                             />
+                        </label>
+                        <div className="h-px bg-gray-50 w-full ml-4"></div>
+                        <label className="flex items-center justify-between cursor-pointer group">
+                            <span className="text-base font-medium text-black">歷史累積資金</span>
+                            <input 
+                                type="radio" 
+                                name="investSource" 
+                                checked={formData.investSource === 'cumulative'} 
+                                onChange={() => setFormData({...formData, investSource: 'cumulative'})} 
+                                className="w-5 h-5 text-black accent-black" 
+                            />
+                        </label>
+                    </div>
+                </div>
+            ) : formData.type === 'expense' ? (
+                <div className="p-4 flex flex-col gap-4">
+                    <div className="flex gap-3">
+                        <button 
+                            onClick={() => setFormData({...formData, tag: 'need'})}
+                            className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.tag === 'need' ? 'bg-gray-100 text-black border-gray-200' : 'bg-white text-gray-400 border-gray-200'}`}
+                        >
+                            需要 (Need)
+                        </button>
+                        <button 
+                            onClick={() => setFormData({...formData, tag: 'want'})}
+                            className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.tag === 'want' ? 'bg-[#FDF2F8] text-[#D53F8C] border-[#FBCFE8]' : 'bg-white text-gray-400 border-gray-200'}`}
+                        >
+                            想要 (Want)
+                        </button>
+                    </div>
+                    
+                    {/* Pay from Savings Toggle */}
+                    <div 
+                        onClick={() => setFormData({...formData, fromSavings: !formData.fromSavings, isInstallment: false})}
+                        className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.fromSavings ? 'bg-[#FEEBC8] border-[#FBD38D]' : 'bg-white border-gray-200'}`}
+                    >
+                        <div className="flex items-center gap-2">
+                            <div className={`p-1.5 rounded-full ${formData.fromSavings ? 'bg-[#F6AD55] text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                <PiggyBank className="w-4 h-4" />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className={`text-sm font-bold ${formData.fromSavings ? 'text-[#975A16]' : 'text-gray-500'}`}>使用現金存款支付</span>
+                                {formData.fromSavings && <span className="text-[10px] text-[#C05621] font-medium">餘額: ${currentSavings.toLocaleString()}</span>}
+                            </div>
                         </div>
-                        <div>
-                            <label className="text-xs font-bold text-gray-400 uppercase tracking-wide block mb-2">每期金額</label>
-                            {formData.installmentCalcType === 'total' ? (
-                                <div className="w-full bg-gray-50 rounded-xl p-3 text-center font-bold text-gray-500 border border-gray-100 flex items-center justify-center gap-1">
-                                    <Calculator className="w-3 h-3 opacity-50" />
-                                    ${formData.amount && formData.installmentCount ? Math.floor(Number(formData.amount) / Number(formData.installmentCount)).toLocaleString() : 0}
-                                </div>
-                            ) : (
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${formData.fromSavings ? 'bg-[#975A16] border-[#975A16]' : 'border-gray-300'}`}>
+                            {formData.fromSavings && <CheckCircle className="w-3.5 h-3.5 text-white" />}
+                        </div>
+                    </div>
+                    {isSavingsInsufficient && (
+                        <div className="flex items-center gap-2 px-2 text-[#E53E3E]">
+                            <AlertCircle className="w-4 h-4" />
+                            <span className="text-xs font-bold">存款餘額不足</span>
+                        </div>
+                    )}
+                </div>
+            ) : (
+                // Income specific options
+                <div className="p-4">
+                    <div 
+                        onClick={() => setFormData({...formData, isAssetLiquidation: !formData.isAssetLiquidation})}
+                        className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.isAssetLiquidation ? 'bg-[#E6FFFA] border-[#81E6D9]' : 'bg-white border-gray-200'}`}
+                    >
+                        <div className="flex items-center gap-2">
+                            <div className={`p-1.5 rounded-full ${formData.isAssetLiquidation ? 'bg-[#38B2AC] text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                <RefreshCcw className="w-4 h-4" />
+                            </div>
+                            <div className="flex flex-col">
+                                <span className={`text-sm font-bold ${formData.isAssetLiquidation ? 'text-[#2C7A7B]' : 'text-gray-500'}`}>資產變現 / 退款</span>
+                                <span className="text-[10px] text-gray-400">存入現金存款，不計入投資額度</span>
+                            </div>
+                        </div>
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${formData.isAssetLiquidation ? 'bg-[#38B2AC] border-[#38B2AC]' : 'border-gray-300'}`}>
+                            {formData.isAssetLiquidation && <CheckCircle className="w-3.5 h-3.5 text-white" />}
+                        </div>
+                    </div>
+                </div>
+            )}
+        </div>
+
+        <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 p-5">
+            <input 
+                type="text" 
+                placeholder="新增備註..." 
+                value={formData.note} 
+                onChange={e => setFormData({...formData, note: e.target.value})} 
+                className="w-full text-base bg-transparent outline-none placeholder-gray-400" 
+            />
+        </div>
+
+        {formData.type === 'expense' && formData.category !== '投資' && !editingId && !formData.fromSavings && (
+            <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 p-5">
+                <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-black">
+                            <CreditCard className="w-5 h-5" />
+                        </div>
+                        <span className="text-base font-bold text-gray-900">分期付款自動生成</span>
+                    </div>
+                    <div 
+                        onClick={() => setFormData({...formData, isInstallment: !formData.isInstallment})}
+                        className={`w-12 h-7 rounded-full p-1 cursor-pointer transition-colors duration-300 ease-in-out ${formData.isInstallment ? 'bg-[#34C759]' : 'bg-gray-200'}`}
+                    >
+                        <div className={`w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform duration-300 ease-in-out ${formData.isInstallment ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                    </div>
+                </div>
+                
+                {formData.isInstallment && (
+                    <div className="mt-5 pt-5 border-t border-gray-50 space-y-4 animate-slide-down">
+                        {/* Calculation Type Toggle */}
+                        <div className="flex bg-gray-100 p-1 rounded-lg mb-4">
+                            <button 
+                                onClick={() => setFormData({...formData, installmentCalcType: 'total'})}
+                                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${formData.installmentCalcType === 'total' ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}
+                            >
+                                輸入總額 (算每期)
+                            </button>
+                            <button 
+                                onClick={() => setFormData({...formData, installmentCalcType: 'monthly'})}
+                                className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${formData.installmentCalcType === 'monthly' ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}
+                            >
+                                輸入每期 (算總額)
+                            </button>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wide block mb-2">期數 (月)</label>
                                 <input 
-                                    type="text"
-                                    placeholder="0"
-                                    value={formData.perMonthInput}
-                                    readOnly={false} 
+                                    type="text" 
                                     inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    value={formData.installmentCount}
                                     onChange={e => {
                                         const val = e.target.value;
-                                        if (/^\d*$/.test(val)) {
+                                        if (val === '' || /^\d+$/.test(val)) {
                                             setFormData({
-                                                ...formData,
-                                                perMonthInput: val,
-                                                amount: val && formData.installmentCount ? String(Number(val) * Number(formData.installmentCount)) : ''
+                                                ...formData, 
+                                                installmentCount: val,
+                                                // Recalculate amount if in monthly mode
+                                                amount: formData.installmentCalcType === 'monthly' && formData.perMonthInput && val ? String(Number(formData.perMonthInput) * Number(val)) : formData.amount
                                             });
                                         }
                                     }}
-                                    className="w-full bg-white rounded-xl p-3 text-center font-bold text-black border-2 border-blue-100 focus:border-blue-500 outline-none cursor-pointer"
+                                    className="w-full bg-gray-50 rounded-xl p-3 text-center font-bold text-black border border-gray-100 focus:border-black outline-none"
                                 />
-                            )}
+                            </div>
+                            <div>
+                                <label className="text-xs font-bold text-gray-400 uppercase tracking-wide block mb-2">每期金額</label>
+                                {formData.installmentCalcType === 'total' ? (
+                                    <div className="w-full bg-gray-50 rounded-xl p-3 text-center font-bold text-gray-500 border border-gray-100 flex items-center justify-center gap-1">
+                                        <Calculator className="w-3 h-3 opacity-50" />
+                                        ${formData.amount && formData.installmentCount ? Math.floor(Number(formData.amount) / Number(formData.installmentCount)).toLocaleString() : 0}
+                                    </div>
+                                ) : (
+                                    <input 
+                                        type="text"
+                                        placeholder="0"
+                                        value={formData.perMonthInput}
+                                        readOnly={false} 
+                                        inputMode="numeric"
+                                        onChange={e => {
+                                            const val = e.target.value;
+                                            if (/^\d*$/.test(val)) {
+                                                setFormData({
+                                                    ...formData,
+                                                    perMonthInput: val,
+                                                    amount: val && formData.installmentCount ? String(Number(val) * Number(formData.installmentCount)) : ''
+                                                });
+                                            }
+                                        }}
+                                        className="w-full bg-white rounded-xl p-3 text-center font-bold text-black border-2 border-blue-100 focus:border-blue-500 outline-none cursor-pointer"
+                                    />
+                                )}
+                            </div>
                         </div>
                     </div>
-                </div>
-             )}
-          </div>
-      )}
+                )}
+            </div>
+        )}
 
-      <div className="flex gap-3 pt-4">
-         {editingId && (
+        <div className="flex gap-3 pt-4">
+            {editingId && (
+                <button 
+                    onClick={(e) => requestDelete(e as any, editingId)} 
+                    className="flex-1 bg-white text-red-500 py-3.5 rounded-xl font-bold border border-gray-200 shadow-sm hover:bg-gray-50 transition flex items-center justify-center gap-2"
+                >
+                    <Trash2 className="w-5 h-5" /> 刪除
+                </button>
+            )}
             <button 
-                onClick={(e) => requestDelete(e as any, editingId)} 
-                className="flex-1 bg-white text-red-500 py-3.5 rounded-xl font-bold border border-gray-200 shadow-sm hover:bg-gray-50 transition flex items-center justify-center gap-2"
+                onClick={handleSave} 
+                disabled={isSavingsInsufficient} // Logic Update 3: Disable save if insufficient funds
+                className={`flex-[2] py-3.5 rounded-xl font-bold shadow-lg transition flex items-center justify-center gap-2 ${isSavingsInsufficient ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-900'}`}
             >
-                <Trash2 className="w-5 h-5" /> 刪除
+                {isSavingsInsufficient ? <Lock className="w-5 h-5" /> : <Save className="w-5 h-5" />} 
+                {editingId ? '儲存變更' : '新增紀錄'}
             </button>
-         )}
-         <button 
-            onClick={handleSave} 
-            className="flex-[2] bg-black text-white py-3.5 rounded-xl font-bold shadow-lg hover:bg-gray-900 transition flex items-center justify-center gap-2"
-        >
-            <Save className="w-5 h-5" /> {editingId ? '儲存變更' : '新增紀錄'}
-        </button>
-      </div>
-    </div>
-  );
+        </div>
+        </div>
+    );
+  };
 
   const renderHistoryView = () => {
     const sorted = transactions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -1090,6 +1173,8 @@ export default function App() {
                             <div className="flex items-center gap-2">
                                 <p className="font-bold text-gray-900 text-base truncate">{t.category}</p>
                                 {t.groupId && <span className="bg-gray-100 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-md">分期</span>}
+                                {t.fromSavings && <span className="bg-[#FEEBC8] text-[#975A16] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><PiggyBank className="w-2.5 h-2.5" /> 存款</span>}
+                                {t.isAssetLiquidation && <span className="bg-[#E6FFFA] text-[#2C7A7B] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><RefreshCcw className="w-2.5 h-2.5" /> 變現</span>}
                             </div>
                             <p className="text-xs text-gray-400 truncate mt-0.5">{t.date} • {t.note || '無備註'}</p>
                             </div>
@@ -1184,14 +1269,28 @@ export default function App() {
        
       {/* Cash Savings - Cream Theme */}
       <div className="p-5 rounded-2xl shadow-sm border border-[#FEEBC8]" style={{ backgroundColor: THEME.creamBg }}>
-        <div className="flex items-center gap-2 mb-3 text-[#975A16]">
-            <LinkIcon className="w-4 h-4" />
-            <p className="text-xs font-bold uppercase tracking-wider">現金累積存款 (10% 儲蓄)</p>
+        <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2 text-[#975A16]">
+                <LinkIcon className="w-4 h-4" />
+                <p className="text-xs font-bold uppercase tracking-wider">現金累積存款 (10% 儲蓄)</p>
+            </div>
+            {stats.investment.savingsExpense > 0 && (
+                <span className="text-[10px] font-bold text-[#C05621] bg-[#FEEBC8] px-2 py-0.5 rounded-full border border-[#FBD38D]">
+                    本月支出 -${stats.investment.savingsExpense.toLocaleString()}
+                </span>
+            )}
         </div>
         <div className="flex items-center justify-between bg-white/60 p-3 rounded-xl">
             <span className="text-sm font-semibold text-gray-600">目前累積</span>
             <span className="text-2xl font-bold" style={{ color: THEME.textBrown }}>${stats.investment.savings.toLocaleString()}</span>
         </div>
+        {stats.investment.assetLiquidation > 0 && (
+            <div className="mt-2 text-right">
+                <span className="text-[10px] text-[#2C7A7B] bg-[#E6FFFA] px-2 py-0.5 rounded-full border border-[#81E6D9]">
+                    +${stats.investment.assetLiquidation.toLocaleString()} 資產變現入帳
+                </span>
+            </div>
+        )}
       </div>
     </div>
   );
@@ -1311,7 +1410,7 @@ export default function App() {
         </div>
         
         <div className="py-4 text-center">
-            <p className="text-xs font-medium text-gray-300">臨界財富 v6.0</p>
+            <p className="text-xs font-medium text-gray-300">臨界財富 v6.5</p>
         </div>
         </div>
     );
@@ -1420,17 +1519,23 @@ export default function App() {
           </div>
 
           {/* Tab Bar */}
-          <div className="flex-none bg-white/85 backdrop-blur-md border-t border-gray-200 pb-[calc(env(safe-area-inset-bottom)+5px)] pt-2 flex justify-around items-center z-30">
-            <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center gap-1 w-14 ${activeTab === 'dashboard' ? 'text-black' : 'text-gray-400'}`}>
-                <PieChart className="w-6 h-6" strokeWidth={activeTab === 'dashboard' ? 2.5 : 2} />
-                <span className="text-[10px] font-medium">總覽</span>
+          <div className="flex-none bg-white/95 backdrop-blur-xl border-t border-gray-200 pb-[calc(env(safe-area-inset-bottom)+5px)] pt-2 px-2 flex justify-around items-center z-30">
+            <button 
+              onClick={() => setActiveTab('dashboard')} 
+              className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'dashboard' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+                <PieChart className="w-6 h-6 mb-0.5" strokeWidth={2.5} />
+                <span className="text-[10px] font-bold">總覽</span>
             </button>
-            <button onClick={() => setActiveTab('history')} className={`flex flex-col items-center gap-1 w-14 ${activeTab === 'history' ? 'text-black' : 'text-gray-400'}`}>
-                <List className="w-6 h-6" strokeWidth={activeTab === 'history' ? 2.5 : 2} />
-                <span className="text-[10px] font-medium">明細</span>
+            <button 
+              onClick={() => setActiveTab('history')} 
+              className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'history' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+                <List className="w-6 h-6 mb-0.5" strokeWidth={2.5} />
+                <span className="text-[10px] font-bold">明細</span>
             </button>
             
-            <div className="relative -top-5">
+            <div className="relative -top-6">
                 <button 
                     onClick={handleFabClick} 
                     className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-xl hover:scale-105 transition-transform ${activeTab === 'form' && !editingId ? 'bg-gray-900 rotate-45' : 'bg-black'}`}
@@ -1439,13 +1544,19 @@ export default function App() {
                 </button>
             </div>
 
-            <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center gap-1 w-14 ${activeTab === 'investment' ? 'text-black' : 'text-gray-400'}`}>
-                <TrendingUp className="w-6 h-6" strokeWidth={activeTab === 'investment' ? 2.5 : 2} />
-                <span className="text-[10px] font-medium">投資</span>
+            <button 
+              onClick={() => setActiveTab('investment')} 
+              className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'investment' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+                <TrendingUp className="w-6 h-6 mb-0.5" strokeWidth={2.5} />
+                <span className="text-[10px] font-bold">投資</span>
             </button>
-            <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center gap-1 w-14 ${activeTab === 'settings' ? 'text-black' : 'text-gray-400'}`}>
-                <Settings className="w-6 h-6" strokeWidth={activeTab === 'settings' ? 2.5 : 2} />
-                <span className="text-[10px] font-medium">設定</span>
+            <button 
+              onClick={() => setActiveTab('settings')} 
+              className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'settings' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}
+            >
+                <Settings className="w-6 h-6 mb-0.5" strokeWidth={2.5} />
+                <span className="text-[10px] font-bold">設定</span>
             </button>
           </div>
         </div>
@@ -1453,5 +1564,3 @@ export default function App() {
     </>
   );
 }
-
-
