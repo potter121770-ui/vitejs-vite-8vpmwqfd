@@ -356,9 +356,9 @@ export default function App() {
       } else if (t.category === '投資') {
          monthlyRawData[monthKey].actualInvested += Number(t.amount);
          
-         if (t.tag === 'invest_monthly') {
-             monthlyRawData[monthKey].expense += Number(t.amount);
-         }
+         // !!! CRITICAL FIX: Investment is NOT an expense in Net Income calculation !!!
+         // It comes from the pool, so we do NOT add it to monthlyRawData[monthKey].expense
+         
       } else {
         const amount = Number(t.amount);
         
@@ -370,8 +370,13 @@ export default function App() {
             else if (t.tag === 'want') monthlyRawData[monthKey].want += amount;
         }
 
-        if (!monthlyRawData[monthKey].categoryMap[t.category]) monthlyRawData[monthKey].categoryMap[t.category] = 0;
-        monthlyRawData[monthKey].categoryMap[t.category] += amount;
+        // Logic Update: Only add to category map if it's NOT an investment
+        // Or if you want to see investment in the pie chart, keep it. 
+        // But usually expense chart shouldn't include investment.
+        if (t.category !== '投資') {
+            if (!monthlyRawData[monthKey].categoryMap[t.category]) monthlyRawData[monthKey].categoryMap[t.category] = 0;
+            monthlyRawData[monthKey].categoryMap[t.category] += amount;
+        }
       }
     });
 
@@ -432,6 +437,7 @@ export default function App() {
       cumulativeSavings = cumulativeSavings + currentMonthSavingsAddon + assetLiquidation - savingsExpense;
       
       // Step C: Calculate Investable Pool
+      // The pool increases by new budget, and decreases by ACTUAL investment made.
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
       carryOverBudget = surplusForNextMonth;
 
@@ -1489,7 +1495,7 @@ export default function App() {
         </div>
         
         <div className="py-4 text-center">
-            <p className="text-xs font-medium text-gray-300">臨界財富 v7.0</p>
+            <p className="text-xs font-medium text-gray-300">臨界財富 v7.1</p>
         </div>
         </div>
     );
