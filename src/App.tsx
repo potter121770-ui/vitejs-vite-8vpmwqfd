@@ -55,11 +55,18 @@ interface ProcessedMonthData extends MonthlyData {
 const THEME = {
   darkBg: '#1C1C1E',      // iOS Dark Gray
   darkCard: '#2C2C2E',    // iOS Dark Gray Light
+  accentGold: '#C59D5F',  // From Icon: Gold
   textPrimary: '#000000', // Black
   creamBg: '#F9F5F0',     // Light Cream
   bgGray: '#F2F2F7',      // iOS System Gray 6
   danger: '#FF3B30',      // iOS Red
   success: '#34C759',     // iOS Green
+  
+  // Added missing colors for Investment View
+  textBlue: '#5AC8FA',    // Light Blue for dark mode
+  textGreen: '#30D158',   // Light Green for dark mode
+  textYellow: '#FFD60A',  // Light Yellow for dark mode
+  textBrown: '#8B5E3C',   // Brown for cream card
 };
 
 const COLORS = ['#C59D5F', '#8B5E3C', '#588157', '#E9C46A', '#F4A261', '#E76F51', '#2A9D8F', '#264653'];
@@ -202,7 +209,7 @@ export default function App() {
         } catch(e) { newValue = currentValue; }
     } else if (key === '=') {
         try {
-            // Clean up trailing operators (e.g., "100+" -> "100")
+            // Clean up trailing operators
             let cleanValue = currentValue.replace(/[^0-9+\-*/.]/g, '');
             if (['+', '-', '*', '/'].includes(cleanValue.slice(-1))) {
                 cleanValue = cleanValue.slice(0, -1);
@@ -214,7 +221,7 @@ export default function App() {
                 newValue = String(Math.floor(Number(result)));
             }
         } catch (e) {
-            newValue = currentValue; // Keep as is if invalid
+            newValue = currentValue; 
         }
     } else {
         if (currentValue === '0' && !['+', '-', '*', '/', '.'].includes(key)) {
@@ -748,6 +755,7 @@ export default function App() {
          <button onClick={() => setActiveTab('dashboard')} className="flex items-center text-gray-500 font-medium -ml-2 p-2 hover:bg-gray-100 rounded-lg transition">
             <ChevronLeft className="w-5 h-5" /> 返回
          </button>
+         <h3 className="font-bold text-lg text-gray-900">{editingId ? '編輯紀錄' : '新增紀錄'}</h3>
          <div className="w-10"></div>
       </div>
 
@@ -927,20 +935,23 @@ export default function App() {
                                 </div>
                             ) : (
                                 <input 
-                                    type="text" // Standard numeric input for per-month, no calculator
-                                    inputMode="numeric"
-                                    pattern="[0-9]*"
+                                    type="text"
                                     placeholder="0"
                                     value={formData.perMonthInput}
+                                    readOnly={false} // Changed back to false to allow system keyboard
+                                    // onClick={() => openCalculator('perMonth')} // Disabled calculator for perMonth
+                                    inputMode="numeric"
                                     onChange={e => {
                                         const val = e.target.value;
-                                        setFormData({
-                                            ...formData,
-                                            perMonthInput: val,
-                                            amount: val && formData.installmentCount ? String(Number(val) * Number(formData.installmentCount)) : ''
-                                        });
+                                        if (/^\d*$/.test(val)) {
+                                            setFormData({
+                                                ...formData,
+                                                perMonthInput: val,
+                                                amount: val && formData.installmentCount ? String(Number(val) * Number(formData.installmentCount)) : ''
+                                            });
+                                        }
                                     }}
-                                    className="w-full bg-white rounded-xl p-3 text-center font-bold text-black border-2 border-blue-100 focus:border-blue-500 outline-none cursor-pointer"
+                                    className="w-full bg-white rounded-xl p-3 text-center font-bold text-black border-2 border-blue-100 focus:border-blue-500 outline-none"
                                 />
                             )}
                         </div>
@@ -1187,7 +1198,7 @@ export default function App() {
       </div>
       
       <div className="py-4 text-center">
-        <p className="text-xs font-medium text-gray-300">臨界財富 v4.4</p>
+        <p className="text-xs font-medium text-gray-300">臨界財富 v5.0</p>
       </div>
     </div>
   );
@@ -1237,9 +1248,9 @@ export default function App() {
             </div>
            )}
 
-           {/* Calculator Overlay - Compact Flat Style */}
+           {/* Calculator Overlay - Compact Flat Style (Approx 320px height) */}
            {isCalculatorOpen && (
-              <div className="absolute inset-x-0 bottom-0 z-50 bg-black shadow-2xl animation-slide-up flex flex-col pb-[calc(env(safe-area-inset-bottom)+15px)] pt-2 px-2 h-auto rounded-t-[20px]">
+              <div className="absolute inset-x-0 bottom-0 z-50 bg-black shadow-2xl animation-slide-up flex flex-col pb-[calc(env(safe-area-inset-bottom)+30px)] pt-2 px-2 h-auto rounded-t-[20px]">
                   
                   {/* Drag Handle / Hide Button */}
                   <div className="w-full flex justify-center mb-2 relative">
@@ -1276,7 +1287,7 @@ export default function App() {
                       {/* Row 5 */}
                       <button onClick={() => handleCalcInput('0')} className="col-span-2 h-12 rounded-lg bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center pl-6 transition-colors">0</button>
                       <button onClick={() => handleCalcInput('.')} className="h-12 rounded-lg bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">.</button>
-                      <button onClick={() => handleCalcInput('=')} className="h-12 rounded-lg bg-black border border-white/20 text-white text-2xl font-bold active:bg-gray-800 flex items-center justify-center transition-colors">=</button>
+                      <button onClick={() => handleCalcInput('OK')} className="h-12 rounded-lg bg-black border border-white/20 text-white text-2xl font-bold active:bg-gray-800 flex items-center justify-center transition-colors">=</button>
                   </div>
               </div>
            )}
