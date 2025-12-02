@@ -891,7 +891,7 @@ export default function App() {
         <div className="bg-gray-200/60 p-1.5 rounded-xl flex relative">
             <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white rounded-[10px] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${formData.type === 'expense' ? 'left-1.5' : 'left-[calc(50%+1.5px)]'}`}></div>
             <button 
-                onClick={() => setFormData({...formData, type: 'expense', category: '飲食', investSource: 'monthly', isAssetLiquidation: false})} 
+                onClick={() => setFormData({...formData, type: 'expense', category: '飲食', tag: 'need', investSource: 'monthly', isAssetLiquidation: false})} 
                 className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'expense' ? 'text-gray-900' : 'text-gray-500'}`}
             >
                 支出
