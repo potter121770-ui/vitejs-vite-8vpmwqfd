@@ -663,6 +663,8 @@ export default function App() {
 
   // --- iOS Style Views ---
 
+  // CardContainer has been moved outside of App
+
   const renderDashboardView = () => {
     const { emergencyFund, emergencyGoal } = stats.dashboard;
     const emergencyProgress = Math.min((emergencyFund / emergencyGoal) * 100, 100);
@@ -670,6 +672,7 @@ export default function App() {
 
     return (
       <div className="space-y-6 pb-4 pt-2">
+        {/* Header Section */}
         <div className="flex justify-start items-center px-1">
             <select 
               value={selectedMonth} 
@@ -681,6 +684,7 @@ export default function App() {
             </select>
         </div>
 
+        {/* Emergency Fund */}
         <div className="p-6 rounded-[24px] text-white relative overflow-hidden shadow-xl" style={{ backgroundColor: THEME.darkBg }}>
            <div className="relative z-10">
               <div className="flex justify-between items-start mb-6">
@@ -711,6 +715,7 @@ export default function App() {
            </div>
         </div>
 
+        {/* Net Income Summary */}
         <CardContainer className="p-5 flex justify-between items-center">
           <div>
             <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">淨收支</p>
@@ -730,34 +735,57 @@ export default function App() {
           </div>
         </CardContainer>
 
-        <div className="grid grid-cols-2 gap-4">
-            <CardContainer className="p-5 flex flex-col justify-between h-32">
-               <div>
-                 <div className="flex items-center gap-2 mb-2 text-gray-500">
-                    <CheckCircle className="w-4 h-4 text-black" />
-                    <span className="text-xs font-bold uppercase tracking-wider">需要 (Need)</span>
-                 </div>
-                 <p className="text-2xl font-bold text-gray-900">${stats.dashboard.need.toLocaleString()}</p>
-               </div>
-               <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-                   <div className="h-full bg-black rounded-full" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.need / stats.dashboard.expense * 100) : 0}%` }}></div>
-               </div>
-            </CardContainer>
-            
-            <CardContainer className="p-5 flex flex-col justify-between h-32">
-               <div>
-                 <div className="flex items-center gap-2 mb-2 text-gray-500">
-                    <Coffee className="w-4 h-4 text-[#C59D5F]" />
-                    <span className="text-xs font-bold uppercase tracking-wider">想要 (Want)</span>
-                 </div>
-                 <p className="text-2xl font-bold text-gray-900">${stats.dashboard.want.toLocaleString()}</p>
-               </div>
-               <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
-                   <div className="h-full bg-[#C59D5F] rounded-full" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.want / stats.dashboard.expense * 100) : 0}%` }}></div>
-               </div>
-            </CardContainer>
-        </div>
+        {/* Need vs Want Ratio Card */}
+        <CardContainer className="p-5">
+           <div className="flex items-center justify-between mb-4">
+              <h3 className="font-bold text-lg text-black">消費性質分析</h3>
+           </div>
 
+           {/* Stacked Bar */}
+           <div className="flex h-4 w-full rounded-full overflow-hidden bg-gray-100 mb-4">
+              <div 
+                className="h-full bg-black transition-all duration-1000 ease-out" 
+                style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.need / stats.dashboard.expense * 100) : 0}%` }}
+              ></div>
+              <div 
+                className="h-full bg-[#C59D5F] transition-all duration-1000 ease-out" 
+                style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.want / stats.dashboard.expense * 100) : 0}%` }}
+              ></div>
+           </div>
+
+           {/* Legend / Stats */}
+           <div className="flex justify-between items-center">
+              {/* Need Side */}
+              <div className="flex flex-col gap-1">
+                 <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-black"></div>
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">需要 (Need)</span>
+                 </div>
+                 <div className="flex items-baseline gap-1">
+                    <span className="text-xl font-bold text-black">${stats.dashboard.need.toLocaleString()}</span>
+                    <span className="text-xs font-medium text-gray-400">
+                        ({stats.dashboard.expense > 0 ? ((stats.dashboard.need / stats.dashboard.expense) * 100).toFixed(0) : 0}%)
+                    </span>
+                 </div>
+              </div>
+
+              {/* Want Side */}
+              <div className="flex flex-col gap-1 items-end text-right">
+                 <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">想要 (Want)</span>
+                    <div className="w-2 h-2 rounded-full bg-[#C59D5F]"></div>
+                 </div>
+                 <div className="flex items-baseline gap-1 justify-end">
+                    <span className="text-xl font-bold text-[#C59D5F]">${stats.dashboard.want.toLocaleString()}</span>
+                    <span className="text-xs font-medium text-gray-400">
+                        ({stats.dashboard.expense > 0 ? ((stats.dashboard.want / stats.dashboard.expense) * 100).toFixed(0) : 0}%)
+                    </span>
+                 </div>
+              </div>
+           </div>
+        </CardContainer>
+
+        {/* Budget Status */}
         <CardContainer className="p-5">
           <div className="flex justify-between items-center mb-6">
              <h3 className="font-bold text-lg text-black">預算執行狀況</h3>
@@ -791,6 +819,7 @@ export default function App() {
           </div>
         </CardContainer>
 
+        {/* Expense Chart */}
         <CardContainer className="p-6">
           <h3 className="font-bold text-lg text-black mb-6">支出分類佔比</h3>
           {stats.dashboard.pieData.length > 0 ? (
@@ -838,7 +867,7 @@ export default function App() {
         </CardContainer>
       </div>
     );
-  };
+  }
 
   const renderFormView = () => {
     const currentSavings = stats.investment.savings;
@@ -1118,7 +1147,7 @@ export default function App() {
             )}
             <button 
                 onClick={handleSave} 
-                disabled={isSavingsInsufficient} 
+                disabled={isSavingsInsufficient} // Logic Update 3: Disable save if insufficient funds
                 className={`flex-[2] py-3.5 rounded-xl font-bold shadow-lg transition flex items-center justify-center gap-2 ${isSavingsInsufficient ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-900'}`}
             >
                 {isSavingsInsufficient ? <Lock className="w-5 h-5" /> : <Save className="w-5 h-5" />} 
@@ -1151,9 +1180,10 @@ export default function App() {
         const currentX = e.targetTouches[0].clientX;
         const diff = touchStartX.current - currentX;
         
-        if (diff > 50) { 
+        // Simple threshold for swipe left (open) and swipe right (close)
+        if (diff > 50) { // Swiped Left
             setSwipedId(id);
-        } else if (diff < -50) { 
+        } else if (diff < -50) { // Swiped Right
             if (swipedId === id) setSwipedId(null);
         }
     };
@@ -1192,10 +1222,12 @@ export default function App() {
                     onTouchMove={(e) => handleTouchMove(e, t.id)}
                     onTouchEnd={handleTouchEnd}
                 >
+                    {/* Background Delete Button */}
                     <div className="absolute inset-y-0 right-0 w-24 bg-[#FF3B30] flex items-center justify-center z-0" onClick={(e) => requestDelete(e, t.id)}>
                         <Trash2 className="w-6 h-6 text-white" />
                     </div>
 
+                    {/* Foreground Content */}
                     <div 
                         onClick={() => openEditMode(t)} 
                         className={`p-4 flex justify-between items-center bg-white relative z-10 transition-transform duration-300 ease-out ${swipedId === t.id ? '-translate-x-24' : 'translate-x-0'} active:bg-gray-50`}
@@ -1236,7 +1268,9 @@ export default function App() {
 
   const renderInvestmentView = () => (
     <div className="relative pt-2">
+       {/* Portfolio Card - Dark Theme (Using Screenshot Colors) */}
        <div className="p-7 rounded-[28px] text-white shadow-2xl relative overflow-hidden mb-6" style={{ backgroundColor: THEME.darkBg }}>
+        {/* Decorative elements */}
         <div className="absolute top-[-20%] right-[-20%] w-[80%] h-[80%] bg-white/5 blur-[60px] rounded-full pointer-events-none"></div>
         
         <div className="relative z-10">
@@ -1300,6 +1334,7 @@ export default function App() {
         </div>
       </div>
        
+      {/* Cash Savings - Cream Theme */}
       <div className="p-5 rounded-2xl shadow-sm border border-[#FEEBC8]" style={{ backgroundColor: THEME.creamBg }}>
         <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2 text-[#975A16]">
@@ -1328,6 +1363,7 @@ export default function App() {
   );
 
   const renderSettingsView = () => {
+    // 內部輔助函式：處理數值輸入，確保只接受數字且自動轉型
     const handleStatChange = (field: keyof StatsData, value: string) => {
         if (/^\d*$/.test(value)) {
             setInitialStats(prev => ({...prev, [field]: value === '' ? 0 : Number(value)}));
@@ -1340,6 +1376,7 @@ export default function App() {
             <h2 className="text-3xl font-extrabold text-black tracking-tight">設定</h2>
         </div>
         
+        {/* Emergency Fund Settings */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">緊急預備金</h4>
             <CardContainer className="divide-y divide-gray-50">
@@ -1371,6 +1408,7 @@ export default function App() {
             <p className="text-xs text-gray-400 mt-2 ml-2">建議設定為 3~6 個月的生活開銷</p>
         </div>
 
+        {/* Initial Assets Settings */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">初始資產配置</h4>
             <CardContainer className="divide-y divide-gray-50">
@@ -1413,6 +1451,7 @@ export default function App() {
             </CardContainer>
         </div>
 
+        {/* Monthly Budget Settings */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">每月預算設定</h4>
             <CardContainer className="divide-y divide-gray-50">
@@ -1437,6 +1476,7 @@ export default function App() {
             </CardContainer>
         </div>
 
+        {/* Data Management Section */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">資料管理</h4>
             <div 
@@ -1449,7 +1489,7 @@ export default function App() {
         </div>
         
         <div className="py-4 text-center">
-            <p className="text-xs font-medium text-gray-300">臨界財富 v6.7</p>
+            <p className="text-xs font-medium text-gray-300">臨界財富 v7.0</p>
         </div>
         </div>
     );
@@ -1511,6 +1551,8 @@ export default function App() {
 
                 <div className="absolute inset-x-0 bottom-0 z-50 bg-black shadow-2xl animation-slide-up flex flex-col pb-[calc(env(safe-area-inset-bottom)+30px)] pt-5 px-3 h-[400px] rounded-t-[24px]">
                     
+                    {/* Removed Header / Drag Handle */}
+
                     {/* Keypad Grid - Compact Flat */}
                     <div className="grid grid-cols-4 gap-2 h-full">
                         {/* Row 1 */}
