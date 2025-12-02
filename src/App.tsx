@@ -180,7 +180,6 @@ export default function App() {
         setCalcDisplay(prev => prev.length > 1 ? prev.slice(0, -1) : '0');
     } else if (key === '=') {
         try {
-            // 安全的運算過濾
             // eslint-disable-next-line no-new-func
             const result = new Function('return ' + calcDisplay.replace(/[^0-9+\-*/.]/g, ''))();
             setCalcDisplay(String(result));
@@ -189,17 +188,15 @@ export default function App() {
         }
     } else if (key === 'OK') {
         try {
-            // 如果最後還是算式，先算完再存
             // eslint-disable-next-line no-new-func
             const result = new Function('return ' + calcDisplay.replace(/[^0-9+\-*/.]/g, ''))();
-            const finalVal = Math.floor(Number(result)); // 金額通常取整數
+            const finalVal = Math.floor(Number(result));
             setFormData(prev => ({ ...prev, amount: String(finalVal) }));
             setIsCalculatorOpen(false);
         } catch (e) {
             setCalcDisplay('Error');
         }
     } else {
-        // 處理數字和運算符輸入
         setCalcDisplay(prev => {
             if (prev === '0' && !['+', '-', '*', '/', '.'].includes(key)) return key;
             if (prev === 'Error') return key;
@@ -273,16 +270,35 @@ export default function App() {
       
       let surplusForNextMonth = 0; 
       let currentMonthSavingsAddon = 0; 
-      let deficitDeducted = 0; 
+      let deficitDeducted = 0;
+      let divertedToEmergency = 0; 
       
       if (netIncome > 0) {
         if (netIncome >= accumulatedDeficit) {
+           // 1. 優先償還累積赤字
            deficitDeducted = accumulatedDeficit;
            let realSurplus = netIncome - accumulatedDeficit;
            accumulatedDeficit = 0; 
-            
-           surplusForNextMonth = realSurplus * 0.9;
-           currentMonthSavingsAddon = realSurplus * 0.1;
+           
+           // 2. 優先填補緊急預備金 (新邏輯)
+           // 直接從淨盈餘 (realSurplus) 中扣除，不佔用後續的投資/儲蓄比例
+           const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
+           
+           if (emergencyGap > 0) {
+               divertedToEmergency = Math.min(realSurplus, emergencyGap);
+               realSurplus -= divertedToEmergency;
+               runningEmergencyFund += divertedToEmergency;
+           }
+
+           // 3. 剩餘盈餘進行 90/10 分配
+           if (realSurplus > 0) {
+               surplusForNextMonth = realSurplus * 0.9;
+               currentMonthSavingsAddon = realSurplus * 0.1;
+           } else {
+               surplusForNextMonth = 0;
+               currentMonthSavingsAddon = 0;
+           }
+
         } else {
            deficitDeducted = netIncome;
            accumulatedDeficit -= netIncome;
@@ -295,23 +311,6 @@ export default function App() {
         currentMonthSavingsAddon = 0;
       }
 
-      let divertedToEmergency = 0;
-      const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
-
-      if (emergencyGap > 0) {
-        const takeFromInvest = Math.min(surplusForNextMonth, emergencyGap);
-        surplusForNextMonth -= takeFromInvest;
-        divertedToEmergency += takeFromInvest;
-        
-        const remainingGap = emergencyGap - takeFromInvest;
-        if (remainingGap > 0) {
-            const takeFromSavings = Math.min(currentMonthSavingsAddon, remainingGap);
-            currentMonthSavingsAddon -= takeFromSavings;
-            divertedToEmergency += takeFromSavings;
-        }
-      }
-
-      runningEmergencyFund += divertedToEmergency;
       cumulativeSavings += currentMonthSavingsAddon;
       
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
@@ -517,7 +516,7 @@ export default function App() {
                  <div className={`h-2.5 rounded-full transition-all duration-1000 ${isEmergencyFull ? 'bg-white' : 'bg-orange-400'}`} style={{ width: `${emergencyProgress}%` }}></div>
               </div>
               <p className="text-[10px] opacity-70 text-right">
-                 {isEmergencyFull ? '資金將正常流向投資與儲蓄' : '優先級：加碼資金 > 現金存款 > 補滿此池'}
+                 {isEmergencyFull ? '資金將正常流向投資與儲蓄' : '優先級：當月淨收支 > 補滿此池'}
               </p>
            </div>
         </div>
@@ -593,19 +592,51 @@ export default function App() {
           {Object.values(budgets).every(b => b === 0) && <p className="text-sm text-gray-400 text-center py-2">所有預算皆未設定，請至設定頁面新增</p>}
         </div>
 
-        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 h-80">
-          <h3 className="font-bold text-gray-800 mb-2">支出分類佔比 ({selectedMonth})</h3>
+        {/* 修正圓餅圖區塊：自適應高度並加入 Legend */}
+        <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 h-auto">
+          <h3 className="font-bold text-gray-800 mb-4">支出分類佔比 ({selectedMonth})</h3>
           {stats.dashboard.pieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-              <RePieChart>
-                  <Pie data={stats.dashboard.pieData} cx="50%" cy="50%" innerRadius={40} outerRadius={80} paddingAngle={5} dataKey="value" label={({name, value}: { name: string, value: number }) => `${name} $${value}`}>
-                  {stats.dashboard.pieData.map((entry, index) => ( <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} /> ))}
-                  </Pie>
-                  <RechartsTooltip />
-              </RePieChart>
-              </ResponsiveContainer>
+            <>
+                <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                    <RePieChart>
+                        <Pie 
+                            data={stats.dashboard.pieData} 
+                            cx="50%" 
+                            cy="50%" 
+                            innerRadius={60} 
+                            outerRadius={80} 
+                            paddingAngle={5} 
+                            dataKey="value"
+                            // 移除 label 以避免重疊
+                        >
+                        {stats.dashboard.pieData.map((entry, index) => ( <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} /> ))}
+                        </Pie>
+                        <RechartsTooltip />
+                    </RePieChart>
+                    </ResponsiveContainer>
+                </div>
+                
+                {/* 新增：圓餅圖下方的分類列表 (Legend) */}
+                <div className="mt-4 space-y-3">
+                    {stats.dashboard.pieData.map((entry, index) => (
+                    <div key={entry.name} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
+                        <span className="text-gray-600 font-medium">{entry.name}</span>
+                        </div>
+                        <div className="font-bold text-gray-800">
+                            ${entry.value.toLocaleString()} 
+                            <span className="text-xs text-gray-400 font-normal ml-1">
+                                ({stats.dashboard.expense > 0 ? ((entry.value / stats.dashboard.expense) * 100).toFixed(1) : 0}%)
+                            </span>
+                        </div>
+                    </div>
+                    ))}
+                </div>
+            </>
           ) : (
-              <div className="h-full flex items-center justify-center text-gray-400 text-sm">本月尚無支出紀錄</div>
+              <div className="h-32 flex items-center justify-center text-gray-400 text-sm">本月尚無支出紀錄</div>
           )}
         </div>
       </div>
@@ -962,7 +993,7 @@ export default function App() {
             <p className="text-xs text-gray-400 text-center mt-2">設定為 0 即可隱藏該分類的進度條</p>
          </div>
       </div>
-      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.7.1 for Yu-Pao (Bug Fix)</p></div>
+      <div className="px-4 py-4 text-center"><p className="text-xs text-gray-400">Ver 2.9.1 for Yu-Pao (Bug Fix)</p></div>
     </div>
   );
 
@@ -985,6 +1016,9 @@ export default function App() {
           position: fixed;
           width: 100%;
           overscroll-behavior: none;
+        }
+        .recharts-text {
+          font-family: sans-serif !important;
         }
       `}</style>
 
@@ -1048,7 +1082,7 @@ export default function App() {
           {/* Header - Fixed Height */}
           <div className="flex-none bg-white px-6 pt-[calc(env(safe-area-inset-top)+20px)] pb-4 border-b border-gray-100 z-20">
             <div className="flex justify-between items-center">
-              <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都是離財務獨立更進一步</p></div>
+              <div><h1 className="text-2xl font-black text-gray-900">Hi, Yu-Pao</h1><p className="text-xs text-gray-500">每次記帳都將離財務獨立更進一步</p></div>
             </div>
           </div>
 
