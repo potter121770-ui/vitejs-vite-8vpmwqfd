@@ -51,7 +51,7 @@ interface ProcessedMonthData extends MonthlyData {
   emergencyGoal: number;
 }
 
-// --- 色彩配置 (Critical Wealth Theme) ---
+// --- 色彩配置 (Critical Wealth Theme - Dark/Cream/Mono) ---
 const THEME = {
   darkBg: '#1C1C1E',      // iOS Dark Gray
   darkCard: '#2C2C2E',    // iOS Dark Gray Light
@@ -61,6 +61,8 @@ const THEME = {
   bgGray: '#F2F2F7',      // iOS System Gray 6
   danger: '#FF3B30',      // iOS Red
   success: '#34C759',     // iOS Green
+  
+  // Text Colors
   textBlue: '#5AC8FA',    
   textGreen: '#30D158',   
   textYellow: '#FFD60A',  
@@ -83,6 +85,13 @@ const INITIAL_STATS_DATA: StatsData = {
 const CATEGORIES = [
   '房租', '飲食', '交通', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療', '收入'
 ];
+
+// --- 元件定義 (移至 App 外部以確保穩定性) ---
+const CardContainer = ({ children, className = '' }: { children: React.ReactNode, className?: string }) => (
+  <div className={`bg-white rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 ${className}`}>
+    {children}
+  </div>
+);
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -187,7 +196,7 @@ export default function App() {
   
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  // --- Calculator Logic (Direct Input + Auto Close) ---
+  // --- Calculator Logic (Simple & Direct) ---
   const handleCalcInput = (key: string) => {
     const currentValue = formData.amount;
     let newValue = currentValue;
@@ -218,7 +227,7 @@ export default function App() {
                 const result = new Function('return ' + cleanValue)();
                 newValue = String(Math.floor(Number(result)));
             }
-            // Logic Update: ALWAYS Close on Equal
+            // IMPORTANT: Always close on equals
             setIsCalculatorOpen(false);
         } catch (e) {
             newValue = currentValue; 
@@ -561,11 +570,7 @@ export default function App() {
 
   // --- iOS Style Views ---
 
-  const CardContainer = ({ children, className = '' }: { children: React.ReactNode, className?: string }) => (
-    <div className={`bg-white rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 ${className}`}>
-      {children}
-    </div>
-  );
+  // CardContainer has been moved outside of App
 
   const renderDashboardView = () => {
     const { emergencyFund, emergencyGoal } = stats.dashboard;
@@ -755,7 +760,6 @@ export default function App() {
          <button onClick={() => setActiveTab('dashboard')} className="flex items-center text-gray-500 font-medium -ml-2 p-2 hover:bg-gray-100 rounded-lg transition">
             <ChevronLeft className="w-5 h-5" /> 返回
          </button>
-         <h3 className="font-bold text-lg text-gray-900">{editingId ? '編輯紀錄' : '新增紀錄'}</h3>
          <div className="w-10"></div>
       </div>
 
@@ -1124,83 +1128,126 @@ export default function App() {
     </div>
   );
 
-  const renderSettingsView = () => (
-    <div className="space-y-6 pt-2">
-      <div className="flex items-end justify-between px-1 mb-2">
-         <h2 className="text-3xl font-extrabold text-black tracking-tight">設定</h2>
-      </div>
-      
-      {/* Emergency Fund Settings */}
-      <div>
-        <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">緊急預備金</h4>
-        <CardContainer className="divide-y divide-gray-50">
-           <div className="p-4 flex items-center justify-between">
-              <label className="text-base font-medium text-black">初始金額</label>
-              <input 
-                type="number" 
-                placeholder="0" 
-                className="text-base font-medium text-right outline-none text-black w-32" 
-                value={initialStats.emergencyCurrent || ''} 
-                onChange={e => setInitialStats({...initialStats, emergencyCurrent: Number(e.target.value)})} 
-              />
-           </div>
-           <div className="p-4 flex items-center justify-between">
-              <label className="text-base font-medium text-black">目標金額</label>
-              <input 
-                type="number" 
-                placeholder="0" 
-                className="text-base font-medium text-right outline-none text-black w-32" 
-                value={initialStats.emergencyGoal || ''} 
-                onChange={e => setInitialStats({...initialStats, emergencyGoal: Number(e.target.value)})} 
-              />
-           </div>
-        </CardContainer>
-        <p className="text-xs text-gray-400 mt-2 ml-2">建議設定為 3~6 個月的生活開銷</p>
-      </div>
+  const renderSettingsView = () => {
+    // 內部輔助函式：處理數值輸入，確保只接受數字且自動轉型
+    const handleStatChange = (field: keyof StatsData, value: string) => {
+        if (/^\d*$/.test(value)) {
+            setInitialStats(prev => ({...prev, [field]: value === '' ? 0 : Number(value)}));
+        }
+    };
 
-      {/* Initial Assets Settings */}
-      <div>
-        <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">初始資產配置</h4>
-        <CardContainer className="divide-y divide-gray-50">
-           <div className="p-4 flex items-center justify-between">
-              <label className="text-base font-medium text-gray-900">累積可加碼資金</label>
-              <input type="number" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.available || ''} onChange={e => setInitialStats({...initialStats, available: Number(e.target.value)})} />
-           </div>
-           <div className="p-4 flex items-center justify-between">
-              <label className="text-base font-medium text-gray-900">初始當月新增額度</label>
-              <input type="number" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.initialInvestable || ''} onChange={e => setInitialStats({...initialStats, initialInvestable: Number(e.target.value)})} />
-           </div>
-           <div className="p-4 flex items-center justify-between">
-              <label className="text-base font-medium text-gray-900">現金累積存款</label>
-              <input type="number" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.savings || ''} onChange={e => setInitialStats({...initialStats, savings: Number(e.target.value)})} />
-           </div>
-        </CardContainer>
-      </div>
+    return (
+        <div className="space-y-6 pt-2">
+        <div className="flex items-end justify-between px-1 mb-2">
+            <h2 className="text-3xl font-extrabold text-black tracking-tight">設定</h2>
+        </div>
+        
+        {/* Emergency Fund Settings */}
+        <div>
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">緊急預備金</h4>
+            <CardContainer className="divide-y divide-gray-50">
+            <div className="p-4 flex items-center justify-between">
+                <label className="text-base font-medium text-black">初始金額</label>
+                <input 
+                    type="text" 
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="0" 
+                    className="text-base font-medium text-right outline-none text-black w-32" 
+                    value={initialStats.emergencyCurrent || ''} 
+                    onChange={e => handleStatChange('emergencyCurrent', e.target.value)} 
+                />
+            </div>
+            <div className="p-4 flex items-center justify-between">
+                <label className="text-base font-medium text-black">目標金額</label>
+                <input 
+                    type="text" 
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="0" 
+                    className="text-base font-medium text-right outline-none text-black w-32" 
+                    value={initialStats.emergencyGoal || ''} 
+                    onChange={e => handleStatChange('emergencyGoal', e.target.value)} 
+                />
+            </div>
+            </CardContainer>
+            <p className="text-xs text-gray-400 mt-2 ml-2">建議設定為 3~6 個月的生活開銷</p>
+        </div>
 
-      {/* Monthly Budget Settings */}
-      <div>
-         <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">每月預算設定</h4>
-         <CardContainer className="divide-y divide-gray-50">
-            {CATEGORIES.filter(c => c !== '收入' && c !== '投資').map(cat => (
-               <div key={cat} className="p-4 flex items-center justify-between">
-                  <label className="text-base font-medium text-gray-900 w-24">{cat}</label>
-                  <input 
-                    type="number" 
-                    placeholder="未設定" 
-                    className="text-base font-medium text-right outline-none text-black flex-1" 
-                    value={budgets[cat] || ''} 
-                    onChange={(e) => updateBudget(cat, e.target.value)} 
-                  />
-               </div>
-            ))}
-         </CardContainer>
-      </div>
-      
-      <div className="py-4 text-center">
-        <p className="text-xs font-medium text-gray-300">臨界財富 v5.4</p>
-      </div>
-    </div>
-  );
+        {/* Initial Assets Settings */}
+        <div>
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">初始資產配置</h4>
+            <CardContainer className="divide-y divide-gray-50">
+            <div className="p-4 flex items-center justify-between">
+                <label className="text-base font-medium text-gray-900">累積可加碼資金</label>
+                <input 
+                    type="text" 
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="0"
+                    className="text-base font-medium text-right outline-none text-black w-32" 
+                    value={initialStats.available || ''} 
+                    onChange={e => handleStatChange('available', e.target.value)} 
+                />
+            </div>
+            <div className="p-4 flex items-center justify-between">
+                <label className="text-base font-medium text-gray-900">初始當月新增額度</label>
+                <input 
+                    type="text" 
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="0"
+                    className="text-base font-medium text-right outline-none text-black w-32" 
+                    value={initialStats.initialInvestable || ''} 
+                    onChange={e => handleStatChange('initialInvestable', e.target.value)} 
+                />
+            </div>
+            <div className="p-4 flex items-center justify-between">
+                <label className="text-base font-medium text-gray-900">現金累積存款</label>
+                <input 
+                    type="text" 
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    placeholder="0"
+                    className="text-base font-medium text-right outline-none text-black w-32" 
+                    value={initialStats.savings || ''} 
+                    onChange={e => handleStatChange('savings', e.target.value)} 
+                />
+            </div>
+            </CardContainer>
+        </div>
+
+        {/* Monthly Budget Settings */}
+        <div>
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">每月預算設定</h4>
+            <CardContainer className="divide-y divide-gray-50">
+                {CATEGORIES.filter(c => c !== '收入' && c !== '投資').map(cat => (
+                <div key={cat} className="p-4 flex items-center justify-between">
+                    <label className="text-base font-medium text-gray-900 w-24">{cat}</label>
+                    <input 
+                        type="text" 
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="未設定" 
+                        className="text-base font-medium text-right outline-none text-black flex-1" 
+                        value={budgets[cat] || ''} 
+                        onChange={(e) => {
+                            if (/^\d*$/.test(e.target.value)) {
+                                updateBudget(cat, e.target.value);
+                            }
+                        }} 
+                    />
+                </div>
+                ))}
+            </CardContainer>
+        </div>
+        
+        <div className="py-4 text-center">
+            <p className="text-xs font-medium text-gray-300">臨界財富 v5.6</p>
+        </div>
+        </div>
+    );
+  };
 
   const needsScrolling = activeTab === 'dashboard' || activeTab === 'history' || activeTab === 'form' || activeTab === 'settings' || activeTab === 'investment';
   
@@ -1247,7 +1294,7 @@ export default function App() {
             </div>
            )}
 
-           {/* Calculator Overlay - Fixed 400px height (Approx 45%) - Resized & Black Border */}
+           {/* Calculator Overlay - Fixed 400px height (Increased by ~15%) */}
            {isCalculatorOpen && (
               <div className="absolute inset-x-0 bottom-0 z-50 bg-black shadow-2xl animation-slide-up flex flex-col pb-[calc(env(safe-area-inset-bottom)+30px)] pt-2 px-3 h-[400px] rounded-t-[24px]">
                   
@@ -1272,15 +1319,15 @@ export default function App() {
                       <button onClick={() => handleCalcInput('*')} className="h-full rounded-xl bg-black border border-white/20 text-white text-2xl font-bold pt-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">×</button>
 
                       {/* Row 3 */}
-                      <button onClick={() => handleCalcInput('4')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">4</button>
-                      <button onClick={() => handleCalcInput('5')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">5</button>
-                      <button onClick={() => handleCalcInput('6')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">6</button>
+                      <button onClick={() => handleCalcInput('4')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">4</button>
+                      <button onClick={() => handleCalcInput('5')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">5</button>
+                      <button onClick={() => handleCalcInput('6')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">6</button>
                       <button onClick={() => handleCalcInput('-')} className="h-full rounded-xl bg-black border border-white/20 text-white text-3xl font-bold pb-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">-</button>
 
                       {/* Row 4 */}
-                      <button onClick={() => handleCalcInput('1')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">1</button>
-                      <button onClick={() => handleCalcInput('2')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">2</button>
-                      <button onClick={() => handleCalcInput('3')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">3</button>
+                      <button onClick={() => handleCalcInput('1')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">1</button>
+                      <button onClick={() => handleCalcInput('2')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">2</button>
+                      <button onClick={() => handleCalcInput('3')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">3</button>
                       <button onClick={() => handleCalcInput('+')} className="h-full rounded-xl bg-black border border-white/20 text-white text-2xl font-bold pb-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">+</button>
                       
                       {/* Row 5 */}
