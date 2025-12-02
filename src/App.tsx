@@ -1243,7 +1243,7 @@ export default function App() {
         </div>
         
         <div className="py-4 text-center">
-            <p className="text-xs font-medium text-gray-300">臨界財富 v5.6</p>
+            <p className="text-xs font-medium text-gray-300">臨界財富 v5.7</p>
         </div>
         </div>
     );
@@ -1307,9 +1307,9 @@ export default function App() {
                   {/* Keypad Grid - Compact Flat */}
                   <div className="grid grid-cols-4 gap-2 h-full">
                       {/* Row 1 */}
-                      <button onClick={() => handleCalcInput('AC')} className="h-full rounded-xl bg-white text-black text-lg font-bold active:bg-gray-200 flex items-center justify-center transition-colors">AC</button>
-                      <button onClick={() => handleCalcInput('DEL')} className="h-full rounded-xl bg-white text-black text-lg font-bold active:bg-gray-200 flex items-center justify-center transition-colors"><Delete className="w-6 h-6" /></button>
-                      <button onClick={() => handleCalcInput('%')} className="h-full rounded-xl bg-white text-black text-lg font-bold active:bg-gray-200 flex items-center justify-center transition-colors">%</button>
+                      <button onClick={() => handleCalcInput('AC')} className="h-full rounded-xl bg-white text-black text-xl font-bold active:bg-gray-200 flex items-center justify-center transition-colors">AC</button>
+                      <button onClick={() => handleCalcInput('DEL')} className="h-full rounded-xl bg-white text-black text-xl font-bold active:bg-gray-200 flex items-center justify-center transition-colors"><Delete className="w-6 h-6" /></button>
+                      <button onClick={() => handleCalcInput('%')} className="h-full rounded-xl bg-white text-black text-xl font-bold active:bg-gray-200 flex items-center justify-center transition-colors">%</button>
                       <button onClick={() => handleCalcInput('/')} className="h-full rounded-xl bg-black border border-white/20 text-white text-2xl font-bold pb-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">÷</button>
 
                       {/* Row 2 */}
@@ -1319,15 +1319,15 @@ export default function App() {
                       <button onClick={() => handleCalcInput('*')} className="h-full rounded-xl bg-black border border-white/20 text-white text-2xl font-bold pt-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">×</button>
 
                       {/* Row 3 */}
-                      <button onClick={() => handleCalcInput('4')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">4</button>
-                      <button onClick={() => handleCalcInput('5')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">5</button>
-                      <button onClick={() => handleCalcInput('6')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">6</button>
+                      <button onClick={() => handleCalcInput('4')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">4</button>
+                      <button onClick={() => handleCalcInput('5')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">5</button>
+                      <button onClick={() => handleCalcInput('6')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">6</button>
                       <button onClick={() => handleCalcInput('-')} className="h-full rounded-xl bg-black border border-white/20 text-white text-3xl font-bold pb-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">-</button>
 
                       {/* Row 4 */}
-                      <button onClick={() => handleCalcInput('1')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">1</button>
-                      <button onClick={() => handleCalcInput('2')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">2</button>
-                      <button onClick={() => handleCalcInput('3')} className="h-full rounded-xl bg-white text-black text-xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">3</button>
+                      <button onClick={() => handleCalcInput('1')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">1</button>
+                      <button onClick={() => handleCalcInput('2')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">2</button>
+                      <button onClick={() => handleCalcInput('3')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">3</button>
                       <button onClick={() => handleCalcInput('+')} className="h-full rounded-xl bg-black border border-white/20 text-white text-2xl font-bold pb-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">+</button>
                       
                       {/* Row 5 */}
