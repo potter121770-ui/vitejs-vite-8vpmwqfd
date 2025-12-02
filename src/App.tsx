@@ -91,6 +91,22 @@ const CATEGORIES = [
   '房租', '飲食', '交通', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療', '收入'
 ];
 
+// --- Helper Functions for Local Time ---
+const getLocalDayString = () => {
+  const d = new Date();
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const getLocalMonthString = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${year}-${month}`;
+};
+
 // --- 元件定義 (移至 App 外部以確保穩定性) ---
 const CardContainer = ({ children, className = '' }: { children: React.ReactNode, className?: string }) => (
   <div className={`bg-white rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 ${className}`}>
@@ -166,7 +182,8 @@ export default function App() {
 
 
   const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
-  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
+  // Use local month string for default
+  const [selectedMonth, setSelectedMonth] = useState(getLocalMonthString());
 
   // --- Swipe to Delete State ---
   const [swipedId, setSwipedId] = useState<number | null>(null);
@@ -178,7 +195,8 @@ export default function App() {
 
   const availableMonths = useMemo(() => {
     const months = new Set(transactions.map(t => t.date.substring(0, 7)));
-    months.add(new Date().toISOString().substring(0, 7));
+    // Ensure current local month is always available
+    months.add(getLocalMonthString());
     return Array.from(months).sort().reverse(); 
   }, [transactions]);
 
@@ -190,7 +208,8 @@ export default function App() {
 
   // 表單狀態
   const [formData, setFormData] = useState({
-    date: new Date().toISOString().split('T')[0],
+    // Use local day string for default
+    date: getLocalDayString(),
     category: '飲食',
     amount: '',
     note: '',
@@ -247,7 +266,8 @@ export default function App() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `critical_wealth_backup_${new Date().toISOString().split('T')[0]}.csv`;
+    // Use local date for filename
+    link.download = `critical_wealth_backup_${getLocalDayString()}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -497,7 +517,7 @@ export default function App() {
   const openAddMode = () => {
     setEditingId(null);
     setFormData({ 
-      date: new Date().toISOString().split('T')[0], 
+      date: getLocalDayString(), // Use local time
       category: '飲食', 
       amount: '', 
       note: '', 
@@ -622,15 +642,26 @@ export default function App() {
        const count = Math.round(Number(formData.installmentCount));
        const perMonthAmount = Math.floor(totalAmount / count);
        const remainder = totalAmount - (perMonthAmount * count);
-       const startDate = new Date(formData.date);
-       const startDay = startDate.getDate();
+       
+       // Use local time date parsing to prevent timezone shift
+       const [y, m, d] = formData.date.split('-').map(Number);
+       // JS Date month is 0-indexed
+       const startDay = d;
        const groupId = `group_${baseId}_${Date.now()}`; 
         
        for (let i = 0; i < count; i++) {
           const currentAmount = i === 0 ? perMonthAmount + remainder : perMonthAmount; 
-          const nextDate = new Date(startDate.getFullYear(), startDate.getMonth() + i, startDay);
-          if (nextDate.getDate() !== startDay) nextDate.setDate(0); 
-          const dateStr = nextDate.toISOString().split('T')[0];
+          // Create next date in local time logic
+          const nextDate = new Date(y, m - 1 + i, d);
+          // Handle month end overflow (e.g. Jan 31 -> Feb 28/29)
+          if (nextDate.getDate() !== startDay) {
+             nextDate.setDate(0); // Set to last day of previous month (which is the correct month in this overflow case)
+          }
+          
+          const nextY = nextDate.getFullYear();
+          const nextM = String(nextDate.getMonth() + 1).padStart(2, '0');
+          const nextD = String(nextDate.getDate()).padStart(2, '0');
+          const dateStr = `${nextY}-${nextM}-${nextD}`;
           
           newTransactions.push({
              id: baseId + i,
@@ -891,7 +922,7 @@ export default function App() {
         <div className="bg-gray-200/60 p-1.5 rounded-xl flex relative">
             <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white rounded-[10px] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${formData.type === 'expense' ? 'left-1.5' : 'left-[calc(50%+1.5px)]'}`}></div>
             <button 
-                onClick={() => setFormData({...formData, type: 'expense', category: '飲食', tag: 'need', investSource: 'monthly', isAssetLiquidation: false})} 
+                onClick={() => setFormData({...formData, type: 'expense', category: '飲食', investSource: 'monthly', isAssetLiquidation: false})} 
                 className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'expense' ? 'text-gray-900' : 'text-gray-500'}`}
             >
                 支出
