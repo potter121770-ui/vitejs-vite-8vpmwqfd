@@ -48,6 +48,7 @@ interface ProcessedMonthData extends MonthlyData {
   savings: number;
   emergencyFund: number;
   divertedToEmergency: number;
+  capitalDivertedToEmergency: number; // New: Track capital diverted from accumulated pool
   emergencyGoal: number;
 }
 
@@ -162,6 +163,10 @@ export default function App() {
 
   const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
+
+  // --- Swipe to Delete State ---
+  const [swipedId, setSwipedId] = useState<number | null>(null);
+  const touchStartX = useRef<number | null>(null);
 
   // --- Calculator State ---
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
@@ -324,17 +329,21 @@ export default function App() {
       
       let monthlyMaxInvestable = carryOverBudget; 
       
+      // 1. Calculate Monthly Flow first
       let surplusForNextMonth = 0; 
       let currentMonthSavingsAddon = 0; 
       let deficitDeducted = 0;
       let divertedToEmergency = 0; 
-      
+      let capitalDivertedToEmergency = 0; // Track amount taken from accumulated capital
+
+      // Step A: Handle Monthly Net Income Flow
       if (netIncome > 0) {
         if (netIncome >= accumulatedDeficit) {
            deficitDeducted = accumulatedDeficit;
            let realSurplus = netIncome - accumulatedDeficit;
            accumulatedDeficit = 0; 
            
+           // Priority 1: Fill Emergency Fund with Monthly Surplus
            const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
            
            if (emergencyGap > 0) {
@@ -365,8 +374,20 @@ export default function App() {
 
       cumulativeSavings += currentMonthSavingsAddon;
       
+      // Step B: Calculate Investable Pool
+      // Add new surplus, subtract what was invested this month
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
       carryOverBudget = surplusForNextMonth;
+
+      // Step C: PRIORITY CHECK - Use Accumulated Capital to fill Emergency Gap
+      // "加碼資金也是優先確認緊急預備金滿了沒 若還沒要先去補充緊急預備金"
+      const remainingEmergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
+      if (remainingEmergencyGap > 0 && cumulativeInvestable > 0) {
+          const transferAmount = Math.min(cumulativeInvestable, remainingEmergencyGap);
+          cumulativeInvestable -= transferAmount;
+          runningEmergencyFund += transferAmount;
+          capitalDivertedToEmergency = transferAmount; // Log this diversion
+      }
 
       processedMonthsData[month] = {
           income,
@@ -378,12 +399,13 @@ export default function App() {
           want, 
           monthlyMaxInvestable,
           monthlyRemainingInvestable: monthlyMaxInvestable - actualInvested,
-          cumulativeAddOnAvailable: cumulativeInvestable + surplusForNextMonth, 
+          cumulativeAddOnAvailable: cumulativeInvestable + surplusForNextMonth, // Current pool + incoming
           deficitDeducted, 
           accumulatedDeficit, 
           savings: cumulativeSavings,
           emergencyFund: runningEmergencyFund,
-          divertedToEmergency, 
+          divertedToEmergency, // From Monthly Income
+          capitalDivertedToEmergency, // From Accumulated Capital
           emergencyGoal
       };
     });
@@ -394,7 +416,7 @@ export default function App() {
         monthlyRemainingInvestable: carryOverBudget - 0, 
         cumulativeAddOnAvailable: cumulativeInvestable,
         deficitDeducted: 0, accumulatedDeficit: 0, savings: cumulativeSavings, 
-        emergencyFund: runningEmergencyFund, divertedToEmergency: 0, emergencyGoal: emergencyGoal
+        emergencyFund: runningEmergencyFund, divertedToEmergency: 0, capitalDivertedToEmergency: 0, emergencyGoal: emergencyGoal
     };
 
     const pieData = Object.keys(currentData.categoryMap).map(key => ({
@@ -428,6 +450,7 @@ export default function App() {
   };
 
   const openEditMode = (trans: Transaction) => {
+    if (swipedId === trans.id) return; // Don't open edit if interacting with swipe
     setEditingId(trans.id);
     const source = trans.category === '投資' 
                    ? (trans.tag === 'invest_cumulative' ? 'cumulative' : 'monthly') 
@@ -558,7 +581,11 @@ export default function App() {
     setActiveTab('history');
   };
 
-  const requestDelete = (e: React.MouseEvent, id: number) => { e.stopPropagation(); setDeleteModal({ show: true, id }); };
+  const requestDelete = (e: React.MouseEvent | React.TouchEvent, id: number) => { 
+      e.stopPropagation(); 
+      setDeleteModal({ show: true, id });
+      setSwipedId(null); // Reset swipe state after triggering delete
+  };
   const confirmDelete = () => {
     if (deleteModal.id) {
       setTransactions(transactions.filter(t => t.id !== deleteModal.id));
@@ -616,7 +643,7 @@ export default function App() {
                  <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${emergencyProgress}%`, backgroundColor: isEmergencyFull ? THEME.success : '#F6AD55' }}></div>
               </div>
               <p className="text-[11px] opacity-60 text-right">
-                 {isEmergencyFull ? '資金充裕' : '優先級：淨盈餘 > 緊急預備金'}
+                 {isEmergencyFull ? '資金充裕' : '優先級：所有閒置資金 > 緊急預備金'}
               </p>
            </div>
         </div>
@@ -967,7 +994,7 @@ export default function App() {
       <div className="flex gap-3 pt-4">
          {editingId && (
             <button 
-                onClick={(e) => requestDelete(e, editingId)} 
+                onClick={(e) => requestDelete(e as any, editingId)} 
                 className="flex-1 bg-white text-red-500 py-3.5 rounded-xl font-bold border border-gray-200 shadow-sm hover:bg-gray-50 transition flex items-center justify-center gap-2"
             >
                 <Trash2 className="w-5 h-5" /> 刪除
@@ -996,6 +1023,26 @@ export default function App() {
         return groups;
       }, {});
 
+    // Swipe handlers
+    const handleTouchStart = (e: React.TouchEvent, id: number) => {
+        touchStartX.current = e.targetTouches[0].clientX;
+    };
+    const handleTouchMove = (e: React.TouchEvent, id: number) => {
+        if (touchStartX.current === null) return;
+        const currentX = e.targetTouches[0].clientX;
+        const diff = touchStartX.current - currentX;
+        
+        // Simple threshold for swipe left (open) and swipe right (close)
+        if (diff > 50) { // Swiped Left
+            setSwipedId(id);
+        } else if (diff < -50) { // Swiped Right
+            if (swipedId === id) setSwipedId(null);
+        }
+    };
+    const handleTouchEnd = () => {
+        touchStartX.current = null;
+    };
+
     return (
       <div className="space-y-6 pb-4 pt-2">
         <div className="flex justify-between items-end px-1">
@@ -1020,28 +1067,45 @@ export default function App() {
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-1">{groupName}</h4>
             <div className="bg-white rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 divide-y divide-gray-50">
               {(groupItems as Transaction[]).map(t => (
-                <div key={t.id} onClick={() => openEditMode(t)} className="p-4 flex justify-between items-center active:bg-gray-50 transition cursor-pointer group">
-                  <div className="flex items-center gap-4 overflow-hidden">
-                    <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${t.type === 'income' ? 'bg-green-50 text-[#34C759]' : t.category === '投資' ? 'bg-gray-100 text-black' : 'bg-gray-100 text-gray-500'}`}>
-                      {t.category === '投資' ? <TrendingUp className="w-5 h-5" /> : <DollarSign className="w-5 h-5" />}
+                <div 
+                    key={t.id} 
+                    className="relative overflow-hidden"
+                    onTouchStart={(e) => handleTouchStart(e, t.id)}
+                    onTouchMove={(e) => handleTouchMove(e, t.id)}
+                    onTouchEnd={handleTouchEnd}
+                >
+                    {/* Background Delete Button */}
+                    <div className="absolute inset-y-0 right-0 w-24 bg-[#FF3B30] flex items-center justify-center z-0" onClick={(e) => requestDelete(e, t.id)}>
+                        <Trash2 className="w-6 h-6 text-white" />
                     </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                          <p className="font-bold text-gray-900 text-base truncate">{t.category}</p>
-                          {t.groupId && <span className="bg-gray-100 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-md">分期</span>}
-                      </div>
-                      <p className="text-xs text-gray-400 truncate mt-0.5">{t.date} • {t.note || '無備註'}</p>
+
+                    {/* Foreground Content */}
+                    <div 
+                        onClick={() => openEditMode(t)} 
+                        className={`p-4 flex justify-between items-center bg-white relative z-10 transition-transform duration-300 ease-out ${swipedId === t.id ? '-translate-x-24' : 'translate-x-0'} active:bg-gray-50`}
+                    >
+                        <div className="flex items-center gap-4 overflow-hidden">
+                            <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${t.type === 'income' ? 'bg-green-50 text-[#34C759]' : t.category === '投資' ? 'bg-gray-100 text-black' : 'bg-gray-100 text-gray-500'}`}>
+                            {t.category === '投資' ? <TrendingUp className="w-5 h-5" /> : <DollarSign className="w-5 h-5" />}
+                            </div>
+                            <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                                <p className="font-bold text-gray-900 text-base truncate">{t.category}</p>
+                                {t.groupId && <span className="bg-gray-100 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-md">分期</span>}
+                            </div>
+                            <p className="text-xs text-gray-400 truncate mt-0.5">{t.date} • {t.note || '無備註'}</p>
+                            </div>
+                        </div>
+                        <div className="text-right">
+                                <p className={`font-bold text-base ${t.type === 'income' ? 'text-[#34C759]' : 'text-black'}`}>
+                                    {t.type === 'income' ? '+' : '-'}{t.amount.toLocaleString()}</p>
+                                {t.category !== '投資' && t.type === 'expense' && (
+                                    <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${t.tag === 'need' ? 'bg-gray-100 text-gray-500' : 'bg-[#FFF5F7] text-[#D53F8C]'}`}>
+                                        {t.tag === 'need' ? '需要' : '想要'}
+                                    </span>
+                                )}
+                        </div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                        <p className={`font-bold text-base ${t.type === 'income' ? 'text-[#34C759]' : 'text-black'}`}>
-                            {t.type === 'income' ? '+' : '-'}{t.amount.toLocaleString()}</p>
-                        {t.category !== '投資' && t.type === 'expense' && (
-                            <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${t.tag === 'need' ? 'bg-gray-100 text-gray-500' : 'bg-[#FFF5F7] text-[#D53F8C]'}`}>
-                                {t.tag === 'need' ? '需要' : '想要'}
-                            </span>
-                        )}
-                  </div>
                 </div>
               ))}
             </div>
@@ -1077,7 +1141,7 @@ export default function App() {
               <p className="text-2xl font-bold" style={{ color: THEME.textBlue }}>${stats.investment.monthlyMaxInvestable.toLocaleString()}</p>
               {stats.investment.divertedToEmergency > 0 && (
                   <p className="text-[9px] text-[#F6AD55] mt-1 opacity-80">
-                    (已扣除 ${stats.investment.divertedToEmergency.toLocaleString()} 至預備金)
+                    (月餘額扣除 ${stats.investment.divertedToEmergency.toLocaleString()} 至預備金)
                   </p>
               )}
             </div>
@@ -1104,6 +1168,12 @@ export default function App() {
                 <span className="text-xs font-bold text-gray-400">歷史累積可加碼資金</span>
                 <span className="text-xl font-bold text-gray-200">${stats.investment.cumulativeAddOnAvailable.toLocaleString()}</span>
              </div>
+             {stats.investment.capitalDivertedToEmergency > 0 && (
+                <div className="flex justify-between items-center bg-orange-500/10 px-2 py-1 rounded">
+                    <span className="text-[10px] text-orange-400">已優先轉移至緊急預備金</span>
+                    <span className="text-xs font-bold text-orange-400">-${stats.investment.capitalDivertedToEmergency.toLocaleString()}</span>
+                </div>
+             )}
              {stats.investment.accumulatedDeficit > 0 && (
                  <div className="flex justify-between items-center">
                     <span className="text-xs text-red-400">赤字</span>
@@ -1243,7 +1313,7 @@ export default function App() {
         </div>
         
         <div className="py-4 text-center">
-            <p className="text-xs font-medium text-gray-300">臨界財富 v5.7</p>
+            <p className="text-xs font-medium text-gray-300">臨界財富 v5.8</p>
         </div>
         </div>
     );
