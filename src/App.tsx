@@ -83,7 +83,7 @@ const INITIAL_STATS_DATA: StatsData = {
   available: 0, 
   savings: 0,
   emergencyCurrent: 0, 
-  emergencyGoal: 0, // Changed from 60000 to 0
+  emergencyGoal: 0, 
   initialInvestable: 0 
 };
 
@@ -401,7 +401,8 @@ export default function App() {
     let cumulativeInvestable = initialStats.available; 
     let cumulativeSavings = initialStats.savings;
     let runningEmergencyFund = initialStats.emergencyCurrent || 0; 
-    const emergencyGoal = initialStats.emergencyGoal || 60000;
+    // FIX: Do not use fallback here, use actual value which might be 0
+    const emergencyGoal = initialStats.emergencyGoal;
     
     let carryOverBudget = initialStats.initialInvestable || 0; 
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
@@ -420,6 +421,7 @@ export default function App() {
 
       if (netIncome > 0) {
         let realSurplus = netIncome;
+        // If goal is 0, gap is 0, correct.
         const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
         
         if (emergencyGap > 0) {
@@ -685,8 +687,8 @@ export default function App() {
 
   const renderDashboardView = () => {
     const { emergencyFund, emergencyGoal } = stats.dashboard;
-    const emergencyProgress = Math.min((emergencyFund / emergencyGoal) * 100, 100);
-    const isEmergencyFull = emergencyFund >= emergencyGoal;
+    const emergencyProgress = emergencyGoal > 0 ? Math.min((emergencyFund / emergencyGoal) * 100, 100) : 0;
+    const isEmergencyFull = emergencyGoal > 0 && emergencyFund >= emergencyGoal;
 
     return (
       <div className="space-y-6 pb-4 pt-2">
@@ -710,18 +712,26 @@ export default function App() {
                     <h2 className="text-sm font-medium opacity-80 flex items-center gap-2 mb-2"><Shield className="w-4 h-4" /> 緊急預備金</h2>
                     <div className="flex items-baseline gap-2">
                         <span className="text-3xl font-bold tracking-tight text-white">${Math.floor(emergencyFund).toLocaleString()}</span>
-                        <span className="text-sm opacity-50 font-medium">/ ${emergencyGoal.toLocaleString()}</span>
+                        {emergencyGoal > 0 ? (
+                            <span className="text-sm opacity-50 font-medium">/ ${emergencyGoal.toLocaleString()}</span>
+                        ) : (
+                             <button onClick={() => setActiveTab('settings')} className="text-xs font-bold text-[#F6AD55] bg-white/10 px-2 py-1 rounded hover:bg-white/20 transition ml-2">
+                                請設定目標
+                             </button>
+                        )}
                     </div>
                  </div>
-                 {isEmergencyFull ? (
-                    <div className="bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 text-white">
-                        <CheckCircle className="w-3.5 h-3.5" /> 已達標
-                    </div>
-                 ) : (
-                    <div className="bg-orange-500/20 text-orange-400 border border-orange-500/30 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-bold animate-pulse">
-                        補水中
-                    </div>
-                 )}
+                 {emergencyGoal > 0 ? (
+                     isEmergencyFull ? (
+                        <div className="bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 text-white">
+                            <CheckCircle className="w-3.5 h-3.5" /> 已達標
+                        </div>
+                     ) : (
+                        <div className="bg-orange-500/20 text-orange-400 border border-orange-500/30 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-bold animate-pulse">
+                            補水中
+                        </div>
+                     )
+                 ) : null}
               </div>
               
               <div className="w-full bg-white/10 rounded-full h-2.5 mb-2 overflow-hidden">
