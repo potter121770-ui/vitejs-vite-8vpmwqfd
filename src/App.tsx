@@ -83,7 +83,7 @@ const INITIAL_STATS_DATA: StatsData = {
   available: 0, 
   savings: 0,
   emergencyCurrent: 0, 
-  emergencyGoal: 0,
+  emergencyGoal: 0, // Changed from 60000 to 0
   initialInvestable: 0 
 };
 
@@ -401,8 +401,7 @@ export default function App() {
     let cumulativeInvestable = initialStats.available; 
     let cumulativeSavings = initialStats.savings;
     let runningEmergencyFund = initialStats.emergencyCurrent || 0; 
-    const emergencyGoal = initialStats.emergencyGoal || 0
-    ;
+    const emergencyGoal = initialStats.emergencyGoal || 60000;
     
     let carryOverBudget = initialStats.initialInvestable || 0; 
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
