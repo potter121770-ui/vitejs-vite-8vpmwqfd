@@ -76,14 +76,14 @@ const THEME = {
 
 const COLORS = ['#C59D5F', '#8B5E3C', '#588157', '#E9C46A', '#F4A261', '#E76F51', '#2A9D8F', '#264653'];
 
-// --- 初始資料 ---
+// --- 初始資料 (Clean Slate) ---
 const INITIAL_TRANSACTIONS: Transaction[] = [];
 const INITIAL_BUDGETS: Budgets = {};
 const INITIAL_STATS_DATA: StatsData = {
   available: 0, 
   savings: 0,
   emergencyCurrent: 0, 
-  emergencyGoal: 60000,
+  emergencyGoal: 0,
   initialInvestable: 0 
 };
 
@@ -116,7 +116,7 @@ const CardContainer = ({ children, className = '' }: { children: React.ReactNode
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [hideFuture, setHideFuture] = useState(false);
+  const [hideFuture, setHideFuture] = useState(true);
   
   // --- iOS App-Like Behavior Hook ---
   useEffect(() => {
@@ -182,7 +182,6 @@ export default function App() {
 
 
   const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
-  // Use local month string for default
   const [selectedMonth, setSelectedMonth] = useState(getLocalMonthString());
 
   // --- Swipe to Delete State ---
@@ -195,7 +194,6 @@ export default function App() {
 
   const availableMonths = useMemo(() => {
     const months = new Set(transactions.map(t => t.date.substring(0, 7)));
-    // Ensure current local month is always available
     months.add(getLocalMonthString());
     return Array.from(months).sort().reverse(); 
   }, [transactions]);
@@ -208,7 +206,6 @@ export default function App() {
 
   // 表單狀態
   const [formData, setFormData] = useState({
-    // Use local day string for default
     date: getLocalDayString(),
     category: '飲食',
     amount: '',
@@ -221,7 +218,7 @@ export default function App() {
     perMonthInput: '',
     investSource: 'monthly' as 'monthly' | 'cumulative',
     fromSavings: false, 
-    isAssetLiquidation: false, // New field
+    isAssetLiquidation: false, 
   });
   
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -229,6 +226,24 @@ export default function App() {
   // --- Export Logic ---
   const handleExport = () => {
     const csvRows = [];
+    
+    // --- Section 1: Snapshot Summary ---
+    const { 
+        cumulativeAddOnAvailable, 
+        savings, 
+        emergencyFund, 
+        emergencyGoal,
+        netIncome
+    } = stats.investment;
+
+    csvRows.push(`"=== 財務概況快照 (${selectedMonth}) ==="`);
+    csvRows.push(`"歷史累積可加碼資金", "${cumulativeAddOnAvailable}"`);
+    csvRows.push(`"現金累積存款", "${savings}"`);
+    csvRows.push(`"緊急預備金 (目前/目標)", "${emergencyFund} / ${emergencyGoal}"`);
+    csvRows.push(`"當月淨收支", "${netIncome}"`);
+    csvRows.push(""); 
+
+    // --- Section 2: Transaction History ---
     const headers = ['ID', '日期', '類型', '分類', '金額', '標籤', '備註', '資金屬性'];
     csvRows.push(headers.join(','));
 
@@ -254,26 +269,24 @@ export default function App() {
             t.category,
             t.amount,
             tagLabel,
-            `"${(t.note || '').replace(/"/g, '""')}"`, // Escape double quotes
+            `"${(t.note || '').replace(/"/g, '""')}"`, 
             specialLabel
         ];
         csvRows.push(row.join(','));
     });
 
-    // Add BOM for Excel utf-8 support
     const csvContent = '\uFEFF' + csvRows.join('\n');
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    // Use local date for filename
     link.download = `critical_wealth_backup_${getLocalDayString()}.csv`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // --- Calculator Logic (Simple & Direct) ---
+  // --- Calculator Logic ---
   const handleCalcInput = (key: string) => {
     const currentValue = formData.amount;
     let newValue = currentValue;
@@ -293,18 +306,15 @@ export default function App() {
         } catch(e) { newValue = currentValue; }
     } else if (key === '=') {
         try {
-            // Clean up trailing operators
             let cleanValue = currentValue.replace(/[^0-9+\-*/.]/g, '');
             if (['+', '-', '*', '/'].includes(cleanValue.slice(-1))) {
                 cleanValue = cleanValue.slice(0, -1);
             }
-            
             if (cleanValue) {
                 // eslint-disable-next-line no-new-func
                 const result = new Function('return ' + cleanValue)();
                 newValue = String(Math.floor(Number(result)));
             }
-            // IMPORTANT: Always close on equals
             setIsCalculatorOpen(false);
         } catch (e) {
             newValue = currentValue; 
@@ -313,7 +323,6 @@ export default function App() {
         if (currentValue === '0' && !['+', '-', '*', '/', '.'].includes(key)) {
             newValue = key;
         } else {
-            // Prevent multiple consecutive operators
             const isOperator = ['+', '-', '*', '/'].includes(key);
             const lastChar = currentValue.slice(-1);
             const isLastOperator = ['+', '-', '*', '/'].includes(lastChar);
@@ -325,17 +334,12 @@ export default function App() {
             }
         }
     }
-
-    // Update main amount directly
     setFormData(prev => ({ ...prev, amount: newValue }));
   };
 
   const openCalculator = () => {
-      // Only open if not in monthly calculation mode (locked)
       if (formData.installmentCalcType === 'monthly' && formData.isInstallment) return;
       setIsCalculatorOpen(true);
-      
-      // Scroll to top smoothly to ensure amount field is visible
       setTimeout(() => {
           if (scrollRef.current) {
               scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
@@ -367,7 +371,6 @@ export default function App() {
       }
 
       if (t.category === '收入') {
-        // Logic Update 1: Separate regular income from asset liquidation
         if (t.isAssetLiquidation) {
             monthlyRawData[monthKey].assetLiquidation += Number(t.amount);
         } else {
@@ -375,13 +378,8 @@ export default function App() {
         }
       } else if (t.category === '投資') {
          monthlyRawData[monthKey].actualInvested += Number(t.amount);
-         
-         // !!! CRITICAL FIX: Investment is NOT an expense in Net Income calculation !!!
-         // It comes from the pool, so we do NOT add it to monthlyRawData[monthKey].expense
-         
       } else {
         const amount = Number(t.amount);
-        
         if (t.fromSavings) {
             monthlyRawData[monthKey].savingsExpense += amount;
         } else {
@@ -390,9 +388,6 @@ export default function App() {
             else if (t.tag === 'want') monthlyRawData[monthKey].want += amount;
         }
 
-        // Logic Update: Only add to category map if it's NOT an investment
-        // Or if you want to see investment in the pie chart, keep it. 
-        // But usually expense chart shouldn't include investment.
         if (t.category !== '投資') {
             if (!monthlyRawData[monthKey].categoryMap[t.category]) monthlyRawData[monthKey].categoryMap[t.category] = 0;
             monthlyRawData[monthKey].categoryMap[t.category] += amount;
@@ -406,7 +401,8 @@ export default function App() {
     let cumulativeInvestable = initialStats.available; 
     let cumulativeSavings = initialStats.savings;
     let runningEmergencyFund = initialStats.emergencyCurrent || 0; 
-    const emergencyGoal = initialStats.emergencyGoal || 60000;
+    const emergencyGoal = initialStats.emergencyGoal || 0
+    ;
     
     let carryOverBudget = initialStats.initialInvestable || 0; 
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
@@ -423,9 +419,7 @@ export default function App() {
       let divertedToEmergency = 0; 
       let capitalDivertedToEmergency = 0; 
 
-      // Step A: Handle Monthly Net Income Flow
       if (netIncome > 0) {
-        // Priority 1: Fill Emergency Fund with Monthly Surplus
         let realSurplus = netIncome;
         const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
         
@@ -444,7 +438,6 @@ export default function App() {
         }
 
       } else {
-        // STRICT DEFICIT MODE
         const deficit = Math.abs(netIncome);
         deficitDeducted = deficit;
         cumulativeInvestable -= deficit; 
@@ -453,15 +446,10 @@ export default function App() {
         currentMonthSavingsAddon = 0;
       }
 
-      // Step B: Update Savings 
       cumulativeSavings = cumulativeSavings + currentMonthSavingsAddon + assetLiquidation - savingsExpense;
-      
-      // Step C: Calculate Investable Pool
-      // The pool increases by new budget, and decreases by ACTUAL investment made.
       cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
       carryOverBudget = surplusForNextMonth;
 
-      // Step D: PRIORITY CHECK - Use Accumulated Capital to fill Emergency Gap
       const remainingEmergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
       if (remainingEmergencyGap > 0 && cumulativeInvestable > 0) {
           const transferAmount = Math.min(cumulativeInvestable, remainingEmergencyGap);
@@ -517,7 +505,7 @@ export default function App() {
   const openAddMode = () => {
     setEditingId(null);
     setFormData({ 
-      date: getLocalDayString(), // Use local time
+      date: getLocalDayString(),
       category: '飲食', 
       amount: '', 
       note: '', 
@@ -570,7 +558,6 @@ export default function App() {
   const handleSave = () => {
     if (!formData.amount) return;
     
-    // 如果輸入框還有未計算的算式，先計算
     let finalAmount = formData.amount;
     try {
        let cleanValue = formData.amount.replace(/[^0-9+\-*/.]/g, '');
@@ -643,19 +630,15 @@ export default function App() {
        const perMonthAmount = Math.floor(totalAmount / count);
        const remainder = totalAmount - (perMonthAmount * count);
        
-       // Use local time date parsing to prevent timezone shift
        const [y, m, d] = formData.date.split('-').map(Number);
-       // JS Date month is 0-indexed
        const startDay = d;
        const groupId = `group_${baseId}_${Date.now()}`; 
         
        for (let i = 0; i < count; i++) {
           const currentAmount = i === 0 ? perMonthAmount + remainder : perMonthAmount; 
-          // Create next date in local time logic
           const nextDate = new Date(y, m - 1 + i, d);
-          // Handle month end overflow (e.g. Jan 31 -> Feb 28/29)
           if (nextDate.getDate() !== startDay) {
-             nextDate.setDate(0); // Set to last day of previous month (which is the correct month in this overflow case)
+             nextDate.setDate(0); 
           }
           
           const nextY = nextDate.getFullYear();
@@ -699,7 +682,6 @@ export default function App() {
   const updateBudget = (category: string, value: string) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
 
   // --- iOS Style Views ---
-
   // CardContainer has been moved outside of App
 
   const renderDashboardView = () => {
@@ -922,7 +904,7 @@ export default function App() {
         <div className="bg-gray-200/60 p-1.5 rounded-xl flex relative">
             <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white rounded-[10px] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${formData.type === 'expense' ? 'left-1.5' : 'left-[calc(50%+1.5px)]'}`}></div>
             <button 
-                onClick={() => setFormData({...formData, type: 'expense', category: '飲食', investSource: 'monthly', isAssetLiquidation: false})} 
+                onClick={() => setFormData({...formData, type: 'expense', category: '飲食', tag: 'need', investSource: 'monthly', isAssetLiquidation: false})} 
                 className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'expense' ? 'text-gray-900' : 'text-gray-500'}`}
             >
                 支出
@@ -1240,10 +1222,10 @@ export default function App() {
           
           <button 
             onClick={() => setHideFuture(!hideFuture)} 
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${hideFuture ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200'}`}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${!hideFuture ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200'}`}
           >
-            {hideFuture ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-            {hideFuture ? '隱藏未到期' : '顯示全部'}
+            {!hideFuture ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+            {!hideFuture ? '隱藏未到期' : '顯示全部'}
           </button>
         </div>
         
@@ -1526,7 +1508,7 @@ export default function App() {
         </div>
         
         <div className="py-4 text-center">
-            <p className="text-xs font-medium text-gray-300">臨界財富 v7.1</p>
+            <p className="text-xs font-medium text-gray-300">臨界財富 v7.5</p>
         </div>
         </div>
     );
