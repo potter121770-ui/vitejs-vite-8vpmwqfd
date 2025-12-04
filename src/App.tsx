@@ -52,6 +52,7 @@ interface ProcessedMonthData extends MonthlyData {
   savings: number;
   emergencyFund: number;
   divertedToEmergency: number;
+  repaidDeficit: number; // New: Amount used to cover previous deficits
   capitalDivertedToEmergency: number; 
   emergencyGoal: number;
 }
@@ -74,8 +75,6 @@ const THEME = {
   textBrown: '#8B5E3C',   
 };
 
-const COLORS = ['#C59D5F', '#8B5E3C', '#588157', '#E9C46A', '#F4A261', '#E76F51', '#2A9D8F', '#264653'];
-
 // --- 初始資料 (Clean Slate) ---
 const INITIAL_TRANSACTIONS: Transaction[] = [];
 const INITIAL_BUDGETS: Budgets = {};
@@ -90,6 +89,8 @@ const INITIAL_STATS_DATA: StatsData = {
 const CATEGORIES = [
   '房租', '飲食', '交通', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療', '收入'
 ];
+
+const COLORS = ['#C59D5F', '#8B5E3C', '#588157', '#E9C46A', '#F4A261', '#E76F51', '#2A9D8F', '#264653'];
 
 // --- Helper Functions for Local Time ---
 const getLocalDayString = () => {
@@ -397,60 +398,99 @@ export default function App() {
 
     const sortedMonthsAsc = Object.keys(monthlyRawData).sort(); 
     
-    let accumulatedDeficit = 0;
+    // --- Running State Variables ---
     let cumulativeInvestable = initialStats.available; 
     let cumulativeSavings = initialStats.savings;
     let runningEmergencyFund = initialStats.emergencyCurrent || 0; 
-    // FIX: Do not use fallback here, use actual value which might be 0
     const emergencyGoal = initialStats.emergencyGoal;
     
+    // Determine the first month's "New Limit" from settings
     let carryOverBudget = initialStats.initialInvestable || 0; 
+    
+    // New: Track unpaid deficit to prioritize repayment
+    let unfilledDeficit = 0;
+    
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     sortedMonthsAsc.forEach(month => {
       const { income, assetLiquidation, expense, savingsExpense, actualInvested, categoryMap, need, want } = monthlyRawData[month];
+      
       const netIncome = income - expense; 
       
+      // 邏輯 1: 投資頁面的「當月新增額度」是來自「上個月的盈餘分配」
+      // Logic 1: This Month's New Limit comes from Previous Month's Surplus Allocation
       let monthlyMaxInvestable = carryOverBudget; 
       
-      let surplusForNextMonth = 0; 
-      let currentMonthSavingsAddon = 0; 
-      let deficitDeducted = 0;
-      let divertedToEmergency = 0; 
-      let capitalDivertedToEmergency = 0; 
+      // Process Monthly Activity on Stocks (Capital & Savings)
+      // Capital changes: + New Limit Added - Actual Invested Amount
+      cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
+      // 邏輯 2: 投資頁面的「累積現金存款」包含「本月新增的存款」(資產變現+本月盈餘分配)
+      // Logic 2: Savings changes: + Asset Liquidation - Savings Expense
+      cumulativeSavings = cumulativeSavings + assetLiquidation - savingsExpense;
 
-      if (netIncome > 0) {
-        let realSurplus = netIncome;
-        // If goal is 0, gap is 0, correct.
-        const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
+      // 3. Process THIS Month's Surplus/Deficit to determine NEXT Month's allocation
+      
+      let surplusForNextMonth = 0; // The 90% for investment (for NEXT month)
+      let currentMonthSavingsAddon = 0; // The 10% for savings (Added IMMEDIATELY)
+      let deficitDeducted = 0;
+      let repaidDeficit = 0;
+      let divertedToEmergency = 0; 
+      
+      if (netIncome < 0) {
+        // --- 邏輯 4 (透支情形): 如果這個月透支，直接扣除累積資金，並記錄欠款 ---
+        // Logic 4 (Deficit): If netIncome < 0, deduct from Capital and record deficit
+        const deficit = Math.abs(netIncome);
+        deficitDeducted = deficit;
         
-        if (emergencyGap > 0) {
-            divertedToEmergency = Math.min(realSurplus, emergencyGap);
-            realSurplus -= divertedToEmergency;
-            runningEmergencyFund += divertedToEmergency;
+        cumulativeInvestable -= deficit; // Pay deficit from Capital
+        unfilledDeficit += deficit;      // Record debt to be repaid later
+        
+        // No surplus to distribute
+        surplusForNextMonth = 0;
+        currentMonthSavingsAddon = 0;
+        
+      } else {
+        // --- 盈餘情形 (Surplus) ---
+        let availableSurplus = netIncome;
+        
+        // 邏輯 4 (補透支): 優先償還歷史累積的透支
+        // Priority 1: Repay Unfilled Deficit (Rule 4)
+        if (unfilledDeficit > 0) {
+             const repayAmount = Math.min(availableSurplus, unfilledDeficit);
+             availableSurplus -= repayAmount;
+             unfilledDeficit -= repayAmount;
+             cumulativeInvestable += repayAmount; // Restore Capital
+             repaidDeficit = repayAmount;
         }
 
-        if (realSurplus > 0) {
-            surplusForNextMonth = realSurplus * 0.9;
-            currentMonthSavingsAddon = realSurplus * 0.1;
+        // 邏輯 3 (緊急預備金): 還完債後，多出來的錢檢查預備金是否滿了
+        // Priority 2: Fill Emergency Fund (Rule 3)
+        const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
+        if (availableSurplus > 0 && emergencyGap > 0) {
+            const fillAmount = Math.min(availableSurplus, emergencyGap);
+            availableSurplus -= fillAmount;
+            runningEmergencyFund += fillAmount;
+            divertedToEmergency = fillAmount;
+        }
+
+        // 邏輯 1 & 2 (90/10 分配): 預備金滿了才能進行 1.2
+        // Priority 3: 90/10 Split (Rule 1 & 2)
+        if (availableSurplus > 0) {
+            surplusForNextMonth = availableSurplus * 0.9;
+            currentMonthSavingsAddon = availableSurplus * 0.1;
         } else {
             surplusForNextMonth = 0;
             currentMonthSavingsAddon = 0;
         }
-
-      } else {
-        const deficit = Math.abs(netIncome);
-        deficitDeducted = deficit;
-        cumulativeInvestable -= deficit; 
-        
-        surplusForNextMonth = 0;
-        currentMonthSavingsAddon = 0;
       }
 
-      cumulativeSavings = cumulativeSavings + currentMonthSavingsAddon + assetLiquidation - savingsExpense;
-      cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
-      carryOverBudget = surplusForNextMonth;
+      // Add the calculated 10% to Savings immediately
+      // (註：雖然邏輯是「來自上個月」，但通常存款是即時入帳，所以這裡當月就加進去)
+      cumulativeSavings += currentMonthSavingsAddon;
 
+      // Final check: Can Capital fill Emergency Fund? (Safety Net)
+      // If we still have an Emergency Gap, and Capital is available, move it.
+      let capitalDivertedToEmergency = 0;
       const remainingEmergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
       if (remainingEmergencyGap > 0 && cumulativeInvestable > 0) {
           const transferAmount = Math.min(cumulativeInvestable, remainingEmergencyGap);
@@ -458,6 +498,9 @@ export default function App() {
           runningEmergencyFund += transferAmount;
           capitalDivertedToEmergency = transferAmount; 
       }
+
+      // Set carryOver for the NEXT iteration (Rule 1 implementation)
+      carryOverBudget = surplusForNextMonth;
 
       processedMonthsData[month] = {
           income,
@@ -471,12 +514,13 @@ export default function App() {
           want, 
           monthlyMaxInvestable,
           monthlyRemainingInvestable: monthlyMaxInvestable - actualInvested,
-          cumulativeAddOnAvailable: cumulativeInvestable + surplusForNextMonth, 
+          cumulativeAddOnAvailable: cumulativeInvestable, 
           deficitDeducted, 
-          accumulatedDeficit, 
+          accumulatedDeficit: unfilledDeficit, 
           savings: cumulativeSavings,
           emergencyFund: runningEmergencyFund,
           divertedToEmergency, 
+          repaidDeficit,
           capitalDivertedToEmergency, 
           emergencyGoal
       };
@@ -487,8 +531,8 @@ export default function App() {
         monthlyMaxInvestable: carryOverBudget,
         monthlyRemainingInvestable: carryOverBudget - 0, 
         cumulativeAddOnAvailable: cumulativeInvestable,
-        deficitDeducted: 0, accumulatedDeficit: 0, savings: cumulativeSavings, 
-        emergencyFund: runningEmergencyFund, divertedToEmergency: 0, capitalDivertedToEmergency: 0, emergencyGoal: emergencyGoal
+        deficitDeducted: 0, accumulatedDeficit: unfilledDeficit, savings: cumulativeSavings, 
+        emergencyFund: runningEmergencyFund, divertedToEmergency: 0, repaidDeficit: 0, capitalDivertedToEmergency: 0, emergencyGoal: emergencyGoal
     };
 
     const pieData = Object.keys(currentData.categoryMap).map(key => ({
@@ -517,7 +561,7 @@ export default function App() {
       installmentCalcType: 'total',
       perMonthInput: '',
       investSource: 'monthly',
-      fromSavings: false,
+      fromSavings: false, 
       isAssetLiquidation: false,
     });
     setActiveTab('form');
@@ -1313,13 +1357,18 @@ export default function App() {
           <div className="grid grid-cols-2 gap-4">
             <div className="p-4 rounded-2xl backdrop-blur-sm border border-white/5" style={{ backgroundColor: THEME.darkCard }}>
               <div className="flex items-center gap-1.5 mb-2">
-                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">當月新增額度</p>
+                 <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">本月可投資金額</p>
                  <Info className="w-3 h-3 text-gray-500 cursor-help" />
               </div>
               <p className="text-2xl font-bold" style={{ color: THEME.textBlue }}>${stats.investment.monthlyMaxInvestable.toLocaleString()}</p>
               {stats.investment.divertedToEmergency > 0 && (
                   <p className="text-[9px] text-[#F6AD55] mt-1 opacity-80">
                     (月餘額扣除 ${stats.investment.divertedToEmergency.toLocaleString()} 至預備金)
+                  </p>
+              )}
+              {stats.investment.repaidDeficit > 0 && (
+                  <p className="text-[9px] text-red-300 mt-1 opacity-80">
+                    (月餘額優先填補赤字 ${stats.investment.repaidDeficit.toLocaleString()})
                   </p>
               )}
             </div>
@@ -1353,9 +1402,9 @@ export default function App() {
                 </div>
              )}
              {stats.investment.accumulatedDeficit > 0 && (
-                 <div className="flex justify-between items-center">
-                    <span className="text-xs text-red-400">赤字</span>
-                    <span className="text-sm font-bold text-red-400">-${stats.investment.accumulatedDeficit.toLocaleString()}</span>
+                 <div className="flex justify-between items-center bg-red-500/10 px-2 py-1 rounded">
+                    <span className="text-[10px] text-red-400">尚未填補之歷史赤字</span>
+                    <span className="text-xs font-bold text-red-400">-${stats.investment.accumulatedDeficit.toLocaleString()}</span>
                  </div>
              )}
           </div>
