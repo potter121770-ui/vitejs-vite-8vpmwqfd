@@ -37,6 +37,8 @@ interface MonthlyData {
   expense: number;         // Regular expenses
   savingsExpense: number;  // Expenses paid from savings
   actualInvested: number;
+  investedFromMonthly: number; // New: Invested using monthly limit
+  investedFromCumulative: number; // New: Invested using cumulative capital
   need: number;
   want: number;
   categoryMap: { [key: string]: number };
@@ -359,6 +361,8 @@ export default function App() {
           expense: 0, 
           savingsExpense: 0, 
           actualInvested: 0, 
+          investedFromMonthly: 0,
+          investedFromCumulative: 0,
           need: 0, 
           want: 0, 
           categoryMap: {} 
@@ -368,19 +372,27 @@ export default function App() {
     transactions.forEach(t => {
       const monthKey = t.date.substring(0, 7);
       if (!monthlyRawData[monthKey]) {
-          monthlyRawData[monthKey] = { income: 0, assetLiquidation: 0, expense: 0, savingsExpense: 0, actualInvested: 0, need: 0, want: 0, categoryMap: {} };
+          monthlyRawData[monthKey] = { income: 0, assetLiquidation: 0, expense: 0, savingsExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
       }
+
+      const amount = Number(t.amount);
 
       if (t.category === '收入') {
         if (t.isAssetLiquidation) {
-            monthlyRawData[monthKey].assetLiquidation += Number(t.amount);
+            monthlyRawData[monthKey].assetLiquidation += amount;
         } else {
-            monthlyRawData[monthKey].income += Number(t.amount);
+            monthlyRawData[monthKey].income += amount;
         }
       } else if (t.category === '投資') {
-         monthlyRawData[monthKey].actualInvested += Number(t.amount);
+         monthlyRawData[monthKey].actualInvested += amount;
+         // Split investment source
+         if (t.investSource === 'cumulative') {
+             monthlyRawData[monthKey].investedFromCumulative += amount;
+         } else {
+             // Default to monthly if not specified or explicit
+             monthlyRawData[monthKey].investedFromMonthly += amount;
+         }
       } else {
-        const amount = Number(t.amount);
         if (t.fromSavings) {
             monthlyRawData[monthKey].savingsExpense += amount;
         } else {
@@ -413,19 +425,20 @@ export default function App() {
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     sortedMonthsAsc.forEach(month => {
-      const { income, assetLiquidation, expense, savingsExpense, actualInvested, categoryMap, need, want } = monthlyRawData[month];
+      const { income, assetLiquidation, expense, savingsExpense, actualInvested, investedFromMonthly, investedFromCumulative, categoryMap, need, want } = monthlyRawData[month];
       
       const netIncome = income - expense; 
       
       // 邏輯 1: 投資頁面的「當月新增額度」是來自「上個月的盈餘分配」
-      // Logic 1: This Month's New Limit comes from Previous Month's Surplus Allocation
       let monthlyMaxInvestable = carryOverBudget; 
       
-      // Process Monthly Activity on Stocks (Capital & Savings)
-      // Capital changes: + New Limit Added - Actual Invested Amount
-      cumulativeInvestable = cumulativeInvestable + monthlyMaxInvestable - actualInvested;
-      // 邏輯 2: 投資頁面的「累積現金存款」包含「本月新增的存款」(資產變現+本月盈餘分配)
-      // Logic 2: Savings changes: + Asset Liquidation - Savings Expense
+      // Process Investment Consumption Separately
+      // 1. Deduct Cumulative Investment from Historical Pile
+      let currentMonthCumulativeRemaining = cumulativeInvestable - investedFromCumulative;
+      // 2. Deduct Monthly Investment from Current Month Limit
+      let currentMonthMonthlyRemaining = monthlyMaxInvestable - investedFromMonthly;
+
+      // 邏輯 2: 投資頁面的「累積現金存款」包含「本月新增的存款」
       cumulativeSavings = cumulativeSavings + assetLiquidation - savingsExpense;
 
       // 3. Process THIS Month's Surplus/Deficit to determine NEXT Month's allocation
@@ -437,34 +450,31 @@ export default function App() {
       let divertedToEmergency = 0; 
       
       if (netIncome < 0) {
-        // --- 邏輯 4 (透支情形): 如果這個月透支，直接扣除累積資金，並記錄欠款 ---
-        // Logic 4 (Deficit): If netIncome < 0, deduct from Capital and record deficit
+        // --- 透支情形 ---
+        // 直接扣除歷史資金 (Cumulative Capital)
         const deficit = Math.abs(netIncome);
         deficitDeducted = deficit;
         
-        cumulativeInvestable -= deficit; // Pay deficit from Capital
-        unfilledDeficit += deficit;      // Record debt to be repaid later
+        currentMonthCumulativeRemaining -= deficit; // Pay deficit from Capital
+        unfilledDeficit += deficit;
         
-        // No surplus to distribute
         surplusForNextMonth = 0;
         currentMonthSavingsAddon = 0;
         
       } else {
-        // --- 盈餘情形 (Surplus) ---
+        // --- 盈餘情形 ---
         let availableSurplus = netIncome;
         
-        // 邏輯 4 (補透支): 優先償還歷史累積的透支
-        // Priority 1: Repay Unfilled Deficit (Rule 4)
+        // 優先償還歷史赤字
         if (unfilledDeficit > 0) {
              const repayAmount = Math.min(availableSurplus, unfilledDeficit);
              availableSurplus -= repayAmount;
              unfilledDeficit -= repayAmount;
-             cumulativeInvestable += repayAmount; // Restore Capital
+             currentMonthCumulativeRemaining += repayAmount; // Restore Capital
              repaidDeficit = repayAmount;
         }
 
-        // 邏輯 3 (緊急預備金): 還完債後，多出來的錢檢查預備金是否滿了
-        // Priority 2: Fill Emergency Fund (Rule 3)
+        // 填補緊急預備金
         const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
         if (availableSurplus > 0 && emergencyGap > 0) {
             const fillAmount = Math.min(availableSurplus, emergencyGap);
@@ -473,8 +483,7 @@ export default function App() {
             divertedToEmergency = fillAmount;
         }
 
-        // 邏輯 1 & 2 (90/10 分配): 預備金滿了才能進行 1.2
-        // Priority 3: 90/10 Split (Rule 1 & 2)
+        // 90/10 分配
         if (availableSurplus > 0) {
             surplusForNextMonth = availableSurplus * 0.9;
             currentMonthSavingsAddon = availableSurplus * 0.1;
@@ -485,21 +494,16 @@ export default function App() {
       }
 
       // Add the calculated 10% to Savings immediately
-      // (註：雖然邏輯是「來自上個月」，但通常存款是即時入帳，所以這裡當月就加進去)
       cumulativeSavings += currentMonthSavingsAddon;
 
-      // Final check: Can Capital fill Emergency Fund? (Safety Net)
-      // If we still have an Emergency Gap, and Capital is available, move it.
-      let capitalDivertedToEmergency = 0;
-      const remainingEmergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
-      if (remainingEmergencyGap > 0 && cumulativeInvestable > 0) {
-          const transferAmount = Math.min(cumulativeInvestable, remainingEmergencyGap);
-          cumulativeInvestable -= transferAmount;
-          runningEmergencyFund += transferAmount;
-          capitalDivertedToEmergency = transferAmount; 
-      }
+      // --- CRITICAL UPDATE: Update Cumulative for NEXT month ---
+      // The cumulative pot for next month is:
+      // (Remaining from History) + (Unused portion of This Month's Limit)
+      // This ensures "Monthly Limit" is separate from "Cumulative" during the month, 
+      // but merges at the end of the month.
+      cumulativeInvestable = currentMonthCumulativeRemaining + currentMonthMonthlyRemaining;
 
-      // Set carryOver for the NEXT iteration (Rule 1 implementation)
+      // Set carryOver for the NEXT iteration
       carryOverBudget = surplusForNextMonth;
 
       processedMonthsData[month] = {
@@ -510,24 +514,26 @@ export default function App() {
           netIncome,
           categoryMap,
           actualInvested,
+          investedFromMonthly,
+          investedFromCumulative,
           need, 
           want, 
           monthlyMaxInvestable,
-          monthlyRemainingInvestable: monthlyMaxInvestable - actualInvested,
-          cumulativeAddOnAvailable: cumulativeInvestable, 
+          monthlyRemainingInvestable: currentMonthMonthlyRemaining,
+          cumulativeAddOnAvailable: currentMonthCumulativeRemaining, // Display value BEFORE merging unused monthly
           deficitDeducted, 
           accumulatedDeficit: unfilledDeficit, 
           savings: cumulativeSavings,
           emergencyFund: runningEmergencyFund,
           divertedToEmergency, 
           repaidDeficit,
-          capitalDivertedToEmergency, 
+          capitalDivertedToEmergency: 0, 
           emergencyGoal
       };
     });
 
     const currentData = processedMonthsData[selectedMonth] || {
-        income: 0, assetLiquidation: 0, expense: 0, savingsExpense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, need: 0, want: 0,
+        income: 0, assetLiquidation: 0, expense: 0, savingsExpense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0,
         monthlyMaxInvestable: carryOverBudget,
         monthlyRemainingInvestable: carryOverBudget - 0, 
         cumulativeAddOnAvailable: cumulativeInvestable,
@@ -1774,5 +1780,3 @@ export default function App() {
     </>
   );
 }
-
-
