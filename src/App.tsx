@@ -942,8 +942,40 @@ export default function App() {
   }
 
   const renderFormView = () => {
-    const currentSavings = stats.investment.savings;
+    // --- Logic Update: Investment Validation & Limits ---
+    const { monthlyRemainingInvestable, cumulativeAddOnAvailable, savings } = stats.investment;
+    
+    // Calculate current available limits for investment
+    let effectiveMonthlyLimit = monthlyRemainingInvestable;
+    let effectiveCumulativeLimit = cumulativeAddOnAvailable;
+
+    // If editing, add back the original amount to the limit to allow modification
+    if (editingId) {
+        const originalTrans = transactions.find(t => t.id === editingId);
+        if (originalTrans && originalTrans.category === '投資') {
+            if (originalTrans.investSource === 'monthly') {
+                effectiveMonthlyLimit += originalTrans.amount;
+            } else if (originalTrans.investSource === 'cumulative') {
+                effectiveCumulativeLimit += originalTrans.amount;
+            }
+        }
+    }
+
+    const currentSavings = savings;
     const isSavingsInsufficient = formData.fromSavings && (Number(formData.amount) > currentSavings);
+    
+    // Check if investment amount exceeds available limit
+    let isInvestmentInsufficient = false;
+    if (formData.type === 'expense' && formData.category === '投資') {
+        const amount = Number(formData.amount);
+        if (formData.investSource === 'monthly' && amount > effectiveMonthlyLimit) {
+            isInvestmentInsufficient = true;
+        } else if (formData.investSource === 'cumulative' && amount > effectiveCumulativeLimit) {
+            isInvestmentInsufficient = true;
+        }
+    }
+
+    const isSubmitDisabled = isSavingsInsufficient || isInvestmentInsufficient;
 
     return (
         <div className="space-y-5 pb-20 pt-2">
@@ -1018,19 +1050,35 @@ export default function App() {
                 <div className="p-5">
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">資金來源</p>
                     <div className="space-y-4">
-                        <label className="flex items-center justify-between cursor-pointer group">
-                            <span className="text-base font-medium text-gray-900">當月新增額度</span>
-                            <input 
-                                type="radio" 
-                                name="investSource" 
-                                checked={formData.investSource === 'monthly'} 
-                                onChange={() => setFormData({...formData, investSource: 'monthly'})} 
-                                className="w-5 h-5 text-black accent-black" 
-                            />
-                        </label>
+                        {/* Option 1: Monthly Investable */}
+                        <div onClick={() => setFormData({...formData, investSource: 'monthly'})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${formData.investSource === 'monthly' ? 'bg-blue-50/50' : ''}`}>
+                            <div className="flex flex-col">
+                                <span className="text-base font-medium text-gray-900">當月可投資金額</span>
+                                <span className={`text-[11px] font-bold mt-0.5 ${effectiveMonthlyLimit < 0 ? 'text-red-400' : 'text-blue-500'}`}>
+                                    餘額: ${effectiveMonthlyLimit.toLocaleString()}
+                                </span>
+                            </div>
+                            <div className="relative flex items-center">
+                                <input 
+                                    type="radio" 
+                                    name="investSource" 
+                                    checked={formData.investSource === 'monthly'} 
+                                    onChange={() => setFormData({...formData, investSource: 'monthly'})} 
+                                    className="w-5 h-5 text-black accent-black" 
+                                />
+                            </div>
+                        </div>
+
                         <div className="h-px bg-gray-50 w-full ml-4"></div>
-                        <label className="flex items-center justify-between cursor-pointer group">
-                            <span className="text-base font-medium text-black">歷史累積資金</span>
+
+                        {/* Option 2: Cumulative Add-on */}
+                        <div onClick={() => setFormData({...formData, investSource: 'cumulative'})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${formData.investSource === 'cumulative' ? 'bg-orange-50/50' : ''}`}>
+                             <div className="flex flex-col">
+                                <span className="text-base font-medium text-black">歷史累積可加碼資金</span>
+                                <span className={`text-[11px] font-bold mt-0.5 ${effectiveCumulativeLimit < 0 ? 'text-red-400' : 'text-[#C59D5F]'}`}>
+                                    餘額: ${effectiveCumulativeLimit.toLocaleString()}
+                                </span>
+                            </div>
                             <input 
                                 type="radio" 
                                 name="investSource" 
@@ -1038,8 +1086,14 @@ export default function App() {
                                 onChange={() => setFormData({...formData, investSource: 'cumulative'})} 
                                 className="w-5 h-5 text-black accent-black" 
                             />
-                        </label>
+                        </div>
                     </div>
+                    {isInvestmentInsufficient && (
+                        <div className="flex items-center gap-2 px-2 mt-4 text-[#E53E3E] animate-pulse">
+                            <AlertCircle className="w-4 h-4" />
+                            <span className="text-xs font-bold">投資額度不足，請調整金額或來源</span>
+                        </div>
+                    )}
                 </div>
             ) : formData.type === 'expense' ? (
                 <div className="p-4 flex flex-col gap-4">
@@ -1219,10 +1273,10 @@ export default function App() {
             )}
             <button 
                 onClick={handleSave} 
-                disabled={isSavingsInsufficient} // Logic Update 3: Disable save if insufficient funds
-                className={`flex-[2] py-3.5 rounded-xl font-bold shadow-lg transition flex items-center justify-center gap-2 ${isSavingsInsufficient ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-900'}`}
+                disabled={isSubmitDisabled} 
+                className={`flex-[2] py-3.5 rounded-xl font-bold shadow-lg transition flex items-center justify-center gap-2 ${isSubmitDisabled ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : 'bg-black text-white hover:bg-gray-900'}`}
             >
-                {isSavingsInsufficient ? <Lock className="w-5 h-5" /> : <Save className="w-5 h-5" />} 
+                {isSubmitDisabled ? <Lock className="w-5 h-5" /> : <Save className="w-5 h-5" />} 
                 {editingId ? '儲存變更' : '新增紀錄'}
             </button>
         </div>
@@ -1502,7 +1556,7 @@ export default function App() {
                 />
             </div>
             <div className="p-4 flex items-center justify-between">
-                <label className="text-base font-medium text-gray-900">初始當月新增額度</label>
+                <label className="text-base font-medium text-gray-900">初始當月可投資金額</label>
                 <input 
                     type="text" 
                     inputMode="numeric"
@@ -1720,3 +1774,5 @@ export default function App() {
     </>
   );
 }
+
+
