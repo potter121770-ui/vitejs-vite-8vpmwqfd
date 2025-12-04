@@ -1556,7 +1556,7 @@ export default function App() {
                 />
             </div>
             <div className="p-4 flex items-center justify-between">
-                <label className="text-base font-medium text-gray-900">初始當月可投資金額</label>
+                <label className="text-base font-medium text-gray-900">當月可投資金額</label>
                 <input 
                     type="text" 
                     inputMode="numeric"
