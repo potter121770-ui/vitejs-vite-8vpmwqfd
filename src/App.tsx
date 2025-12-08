@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
@@ -15,8 +15,8 @@ interface Transaction {
   note: string;
   groupId?: string;
   investSource?: 'monthly' | 'cumulative';
-  fromSavings?: boolean; // Expense: Paid from savings
-  isAssetLiquidation?: boolean; // Income: Direct to savings (e.g. selling camera)
+  fromSavings?: boolean; 
+  isAssetLiquidation?: boolean; 
 }
 
 interface Budgets {
@@ -32,13 +32,14 @@ interface StatsData {
 }
 
 interface MonthlyData {
-  income: number;          // Regular income
-  assetLiquidation: number; // Income from selling assets
-  expense: number;         // Regular expenses
-  savingsExpense: number;  // Expenses paid from savings
+  income: number;          
+  assetLiquidation: number; 
+  expense: number;         
+  installmentExpense: number; 
+  savingsExpense: number;  
   actualInvested: number;
-  investedFromMonthly: number; // New: Invested using monthly limit
-  investedFromCumulative: number; // New: Invested using cumulative capital
+  investedFromMonthly: number; 
+  investedFromCumulative: number; 
   need: number;
   want: number;
   categoryMap: { [key: string]: number };
@@ -49,35 +50,33 @@ interface ProcessedMonthData extends MonthlyData {
   monthlyMaxInvestable: number;
   monthlyRemainingInvestable: number;
   cumulativeAddOnAvailable: number;
-  deficitDeducted: number; // Deficit deducted from capital immediately
-  accumulatedDeficit: number; // Kept for legacy compatibility, but logic changed to strict
+  deficitDeducted: number; 
+  accumulatedDeficit: number; 
   savings: number;
   emergencyFund: number;
   divertedToEmergency: number;
-  repaidDeficit: number; // New: Amount used to cover previous deficits
+  repaidDeficit: number; 
   capitalDivertedToEmergency: number; 
   emergencyGoal: number;
 }
 
-// --- 色彩配置 (Critical Wealth Theme - Dark/Cream/Mono) ---
+// --- 色彩配置 (Critical Wealth Theme) ---
 const THEME = {
-  darkBg: '#1C1C1E',      // iOS Dark Gray
-  darkCard: '#2C2C2E',    // iOS Dark Gray Light
-  accentGold: '#C59D5F',  // From Icon: Gold
-  textPrimary: '#000000', // Black
-  creamBg: '#F9F5F0',     // Light Cream
-  bgGray: '#F2F2F7',      // iOS System Gray 6
-  danger: '#FF3B30',      // iOS Red
-  success: '#34C759',     // iOS Green
-  
-  // Text Colors
+  darkBg: '#1C1C1E',      
+  darkCard: '#2C2C2E',    
+  accentGold: '#C59D5F',  
+  textPrimary: '#000000', 
+  creamBg: '#F9F5F0',     
+  bgGray: '#F2F2F7',      
+  danger: '#FF3B30',      
+  success: '#34C759',     
   textBlue: '#5AC8FA',    
   textGreen: '#30D158',   
   textYellow: '#FFD60A',  
   textBrown: '#8B5E3C',   
 };
 
-// --- 初始資料 (Clean Slate) ---
+// --- 初始資料 ---
 const INITIAL_TRANSACTIONS: Transaction[] = [];
 const INITIAL_BUDGETS: Budgets = {};
 const INITIAL_STATS_DATA: StatsData = {
@@ -89,12 +88,12 @@ const INITIAL_STATS_DATA: StatsData = {
 };
 
 const CATEGORIES = [
-  '房租', '飲食', '交通', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療', '收入'
+  '房租', '飲食', '交通', '電子產品', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療', '收入'
 ];
 
-const COLORS = ['#C59D5F', '#8B5E3C', '#588157', '#E9C46A', '#F4A261', '#E76F51', '#2A9D8F', '#264653'];
+const COLORS = ['#C59D5F', '#8B5E3C', '#588157', '#E9C46A', '#F4A261', '#E76F51', '#2A9D8F', '#264653', '#AAB3AB', '#B5838D'];
 
-// --- Helper Functions for Local Time ---
+// --- Helper Functions ---
 const getLocalDayString = () => {
   const d = new Date();
   const year = d.getFullYear();
@@ -110,7 +109,7 @@ const getLocalMonthString = () => {
     return `${year}-${month}`;
 };
 
-// --- 元件定義 (移至 App 外部以確保穩定性) ---
+// --- UI Components ---
 const CardContainer = ({ children, className = '' }: { children: React.ReactNode, className?: string }) => (
   <div className={`bg-white rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 ${className}`}>
     {children}
@@ -131,15 +130,9 @@ export default function App() {
     }
     meta.setAttribute('content', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content');
 
-    const preventPinch = (e: Event) => {
-      e.preventDefault();
-    };
-
+    const preventPinch = (e: Event) => { e.preventDefault(); };
     document.addEventListener('gesturestart', preventPinch, { passive: false });
-
-    return () => {
-      document.removeEventListener('gesturestart', preventPinch);
-    };
+    return () => { document.removeEventListener('gesturestart', preventPinch); };
   }, []);
 
   // --- State Initialization ---
@@ -147,9 +140,7 @@ export default function App() {
     try {
       const saved = localStorage.getItem('yupao_transactions_v2');
       return saved ? JSON.parse(saved) : INITIAL_TRANSACTIONS;
-    } catch (e) {
-      return INITIAL_TRANSACTIONS;
-    }
+    } catch (e) { return INITIAL_TRANSACTIONS; }
   });
   
   const [initialStats, setInitialStats] = useState<StatsData>(() => {
@@ -157,41 +148,25 @@ export default function App() {
       const saved = localStorage.getItem('yupao_stats_v2');
       const parsed = saved ? JSON.parse(saved) : INITIAL_STATS_DATA;
       return { ...INITIAL_STATS_DATA, ...parsed };
-    } catch (e) {
-      return INITIAL_STATS_DATA;
-    }
+    } catch (e) { return INITIAL_STATS_DATA; }
   });
 
   const [budgets, setBudgets] = useState<Budgets>(() => {
     try {
       const saved = localStorage.getItem('yupao_budgets_v2');
       return saved ? JSON.parse(saved) : INITIAL_BUDGETS;
-    } catch (e) {
-      return INITIAL_BUDGETS;
-    }
+    } catch (e) { return INITIAL_BUDGETS; }
   });
 
-  useEffect(() => {
-    localStorage.setItem('yupao_transactions_v2', JSON.stringify(transactions));
-  }, [transactions]);
-
-  useEffect(() => {
-    localStorage.setItem('yupao_stats_v2', JSON.stringify(initialStats));
-  }, [initialStats]);
-
-  useEffect(() => {
-    localStorage.setItem('yupao_budgets_v2', JSON.stringify(budgets));
-  }, [budgets]);
-
+  useEffect(() => { localStorage.setItem('yupao_transactions_v2', JSON.stringify(transactions)); }, [transactions]);
+  useEffect(() => { localStorage.setItem('yupao_stats_v2', JSON.stringify(initialStats)); }, [initialStats]);
+  useEffect(() => { localStorage.setItem('yupao_budgets_v2', JSON.stringify(budgets)); }, [budgets]);
 
   const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
+  const [resetModal, setResetModal] = useState(false);
   const [selectedMonth, setSelectedMonth] = useState(getLocalMonthString());
-
-  // --- Swipe to Delete State ---
   const [swipedId, setSwipedId] = useState<number | null>(null);
   const touchStartX = useRef<number | null>(null);
-
-  // --- Calculator State ---
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -207,7 +182,7 @@ export default function App() {
     }
   }, [availableMonths, selectedMonth]);
 
-  // 表單狀態
+  // Form State
   const [formData, setFormData] = useState({
     date: getLocalDayString(),
     category: '飲食',
@@ -216,7 +191,7 @@ export default function App() {
     tag: 'need' as 'need' | 'want' | 'income', 
     type: 'expense' as 'income' | 'expense',
     isInstallment: false, 
-    installmentCount: '3', 
+    installmentCount: '3',  
     installmentCalcType: 'total' as 'total' | 'monthly', 
     perMonthInput: '',
     investSource: 'monthly' as 'monthly' | 'cumulative',
@@ -226,35 +201,41 @@ export default function App() {
   
   const [editingId, setEditingId] = useState<number | null>(null);
 
-  // --- Export Logic ---
+  // --- Export Logic (Modified for Continuity) ---
   const handleExport = () => {
     const csvRows = [];
     
-    // --- Section 1: Snapshot Summary ---
+    // 取得「當下」經過計算後的實際數值
     const { 
-        cumulativeAddOnAvailable, 
-        savings, 
-        emergencyFund, 
-        emergencyGoal,
-        netIncome
+        emergencyFund,          // 對應：初始金額 (當下實際值)
+        emergencyGoal,          // 對應：目標金額
+        cumulativeAddOnAvailable, // 對應：累積可加碼資金 (當下實際值)
+        monthlyRemainingInvestable, // 對應：當月可投資金額 (當下實際值)
+        savings                 // 對應：現金累積存款 (當下實際值)
     } = stats.investment;
 
-    csvRows.push(`"=== 財務概況快照 (${selectedMonth}) ==="`);
-    csvRows.push(`"歷史累積可加碼資金", "${cumulativeAddOnAvailable}"`);
-    csvRows.push(`"現金累積存款", "${savings}"`);
-    csvRows.push(`"緊急預備金 (目前/目標)", "${emergencyFund} / ${emergencyGoal}"`);
-    csvRows.push(`"當月淨收支", "${netIncome}"`);
-    csvRows.push(""); 
+    // --- Section 0: Migration Data (Formatted for Continuity) ---
+    // 這裡輸出的順序和名稱完全對應設定頁面，且數值為「當前餘額」
+    csvRows.push(`"=== 系統設定備份 (銜接用：當下實際數值) ==="`);
+    
+    // 緊急預備金區塊
+    csvRows.push(`"緊急預備金-初始金額", "${emergencyFund}"`);
+    csvRows.push(`"緊急預備金-目標金額", "${emergencyGoal}"`);
+    
+    // 初始資產配置區塊
+    csvRows.push(`"初始資產配置-累積可加碼資金", "${cumulativeAddOnAvailable}"`);
+    csvRows.push(`"初始資產配置-當月可投資金額", "${monthlyRemainingInvestable}"`);
+    csvRows.push(`"初始資產配置-現金累積存款", "${savings}"`);
+    
+    csvRows.push(""); // 空行分隔
 
-    // --- Section 2: Transaction History ---
-    const headers = ['ID', '日期', '類型', '分類', '金額', '標籤', '備註', '資金屬性'];
+    // --- Section 1: Transaction History ---
+    const headers = ['ID', '日期', '類型', '分類', '金額', '標籤', '備註', '資金屬性', '分期ID'];
     csvRows.push(headers.join(','));
 
     transactions.forEach(t => {
         let typeLabel = t.type === 'income' ? '收入' : '支出';
-        let tagLabel = '';
-        if (t.tag === 'need') tagLabel = 'Need';
-        if (t.tag === 'want') tagLabel = 'Want';
+        let tagLabel = t.tag;
         
         let specialLabel = '一般月收支';
         if (t.category === '投資') {
@@ -273,7 +254,8 @@ export default function App() {
             t.amount,
             tagLabel,
             `"${(t.note || '').replace(/"/g, '""')}"`, 
-            specialLabel
+            specialLabel,
+            t.groupId || ''
         ];
         csvRows.push(row.join(','));
     });
@@ -287,6 +269,14 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // --- Reset App Logic ---
+  const handleResetApp = () => {
+      localStorage.removeItem('yupao_transactions_v2');
+      localStorage.removeItem('yupao_stats_v2');
+      localStorage.removeItem('yupao_budgets_v2');
+      window.location.reload();
   };
 
   // --- Calculator Logic ---
@@ -350,7 +340,7 @@ export default function App() {
       }, 100);
   };
 
-  // --- 核心邏輯計算 ---
+  // --- Core Calculation Logic ---
   const stats = useMemo(() => {
     let monthlyRawData: { [key: string]: MonthlyData } = {};
     
@@ -359,6 +349,7 @@ export default function App() {
           income: 0, 
           assetLiquidation: 0,
           expense: 0, 
+          installmentExpense: 0, 
           savingsExpense: 0, 
           actualInvested: 0, 
           investedFromMonthly: 0,
@@ -372,7 +363,7 @@ export default function App() {
     transactions.forEach(t => {
       const monthKey = t.date.substring(0, 7);
       if (!monthlyRawData[monthKey]) {
-          monthlyRawData[monthKey] = { income: 0, assetLiquidation: 0, expense: 0, savingsExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
+          monthlyRawData[monthKey] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
       }
 
       const amount = Number(t.amount);
@@ -385,11 +376,9 @@ export default function App() {
         }
       } else if (t.category === '投資') {
          monthlyRawData[monthKey].actualInvested += amount;
-         // Split investment source
          if (t.investSource === 'cumulative') {
              monthlyRawData[monthKey].investedFromCumulative += amount;
          } else {
-             // Default to monthly if not specified or explicit
              monthlyRawData[monthKey].investedFromMonthly += amount;
          }
       } else {
@@ -397,6 +386,12 @@ export default function App() {
             monthlyRawData[monthKey].savingsExpense += amount;
         } else {
             monthlyRawData[monthKey].expense += amount;
+            
+            // Track Installment Expense
+            if (t.groupId) {
+                monthlyRawData[monthKey].installmentExpense += amount;
+            }
+
             if (t.tag === 'need') monthlyRawData[monthKey].need += amount;
             else if (t.tag === 'want') monthlyRawData[monthKey].want += amount;
         }
@@ -410,71 +405,54 @@ export default function App() {
 
     const sortedMonthsAsc = Object.keys(monthlyRawData).sort(); 
     
-    // --- Running State Variables ---
     let cumulativeInvestable = initialStats.available; 
     let cumulativeSavings = initialStats.savings;
     let runningEmergencyFund = initialStats.emergencyCurrent || 0; 
     const emergencyGoal = initialStats.emergencyGoal;
     
-    // Determine the first month's "New Limit" from settings
     let carryOverBudget = initialStats.initialInvestable || 0; 
-    
-    // New: Track unpaid deficit to prioritize repayment
     let unfilledDeficit = 0;
-    
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     sortedMonthsAsc.forEach(month => {
-      const { income, assetLiquidation, expense, savingsExpense, actualInvested, investedFromMonthly, investedFromCumulative, categoryMap, need, want } = monthlyRawData[month];
+      const { income, assetLiquidation, expense, installmentExpense, savingsExpense, actualInvested, investedFromMonthly, investedFromCumulative, categoryMap, need, want } = monthlyRawData[month];
       
       const netIncome = income - expense; 
       
-      // 邏輯 1: 投資頁面的「當月新增額度」是來自「上個月的盈餘分配」
       let monthlyMaxInvestable = carryOverBudget; 
       
-      // Process Investment Consumption Separately
-      // 1. Deduct Cumulative Investment from Historical Pile
       let currentMonthCumulativeRemaining = cumulativeInvestable - investedFromCumulative;
-      // 2. Deduct Monthly Investment from Current Month Limit
       let currentMonthMonthlyRemaining = monthlyMaxInvestable - investedFromMonthly;
 
-      // 邏輯 2: 投資頁面的「累積現金存款」包含「本月新增的存款」
       cumulativeSavings = cumulativeSavings + assetLiquidation - savingsExpense;
 
-      // 3. Process THIS Month's Surplus/Deficit to determine NEXT Month's allocation
-      
-      let surplusForNextMonth = 0; // The 90% for investment (for NEXT month)
-      let currentMonthSavingsAddon = 0; // The 10% for savings (Added IMMEDIATELY)
+      let surplusForNextMonth = 0; 
+      let currentMonthSavingsAddon = 0; 
       let deficitDeducted = 0;
       let repaidDeficit = 0;
       let divertedToEmergency = 0; 
       
       if (netIncome < 0) {
-        // --- 透支情形 ---
-        // 直接扣除歷史資金 (Cumulative Capital)
         const deficit = Math.abs(netIncome);
         deficitDeducted = deficit;
         
-        currentMonthCumulativeRemaining -= deficit; // Pay deficit from Capital
+        currentMonthCumulativeRemaining -= deficit; 
         unfilledDeficit += deficit;
         
         surplusForNextMonth = 0;
         currentMonthSavingsAddon = 0;
         
       } else {
-        // --- 盈餘情形 ---
         let availableSurplus = netIncome;
         
-        // 優先償還歷史赤字
         if (unfilledDeficit > 0) {
              const repayAmount = Math.min(availableSurplus, unfilledDeficit);
              availableSurplus -= repayAmount;
              unfilledDeficit -= repayAmount;
-             currentMonthCumulativeRemaining += repayAmount; // Restore Capital
+             currentMonthCumulativeRemaining += repayAmount; 
              repaidDeficit = repayAmount;
         }
 
-        // 填補緊急預備金
         const emergencyGap = Math.max(0, emergencyGoal - runningEmergencyFund);
         if (availableSurplus > 0 && emergencyGap > 0) {
             const fillAmount = Math.min(availableSurplus, emergencyGap);
@@ -483,7 +461,6 @@ export default function App() {
             divertedToEmergency = fillAmount;
         }
 
-        // 90/10 分配
         if (availableSurplus > 0) {
             surplusForNextMonth = availableSurplus * 0.9;
             currentMonthSavingsAddon = availableSurplus * 0.1;
@@ -493,23 +470,15 @@ export default function App() {
         }
       }
 
-      // Add the calculated 10% to Savings immediately
       cumulativeSavings += currentMonthSavingsAddon;
-
-      // --- CRITICAL UPDATE: Update Cumulative for NEXT month ---
-      // The cumulative pot for next month is:
-      // (Remaining from History) + (Unused portion of This Month's Limit)
-      // This ensures "Monthly Limit" is separate from "Cumulative" during the month, 
-      // but merges at the end of the month.
       cumulativeInvestable = currentMonthCumulativeRemaining + currentMonthMonthlyRemaining;
-
-      // Set carryOver for the NEXT iteration
       carryOverBudget = surplusForNextMonth;
 
       processedMonthsData[month] = {
           income,
           assetLiquidation,
           expense,
+          installmentExpense,
           savingsExpense, 
           netIncome,
           categoryMap,
@@ -520,7 +489,7 @@ export default function App() {
           want, 
           monthlyMaxInvestable,
           monthlyRemainingInvestable: currentMonthMonthlyRemaining,
-          cumulativeAddOnAvailable: currentMonthCumulativeRemaining, // Display value BEFORE merging unused monthly
+          cumulativeAddOnAvailable: currentMonthCumulativeRemaining, 
           deficitDeducted, 
           accumulatedDeficit: unfilledDeficit, 
           savings: cumulativeSavings,
@@ -533,7 +502,7 @@ export default function App() {
     });
 
     const currentData = processedMonthsData[selectedMonth] || {
-        income: 0, assetLiquidation: 0, expense: 0, savingsExpense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0,
+        income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, netIncome: 0, categoryMap: {}, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0,
         monthlyMaxInvestable: carryOverBudget,
         monthlyRemainingInvestable: carryOverBudget - 0, 
         cumulativeAddOnAvailable: cumulativeInvestable,
@@ -552,7 +521,7 @@ export default function App() {
     };
   }, [transactions, initialStats, selectedMonth, availableMonths]);
 
-  // --- 操作功能 ---
+  // --- Operations ---
   const openAddMode = () => {
     setEditingId(null);
     setFormData({ 
@@ -684,7 +653,7 @@ export default function App() {
        const [y, m, d] = formData.date.split('-').map(Number);
        const startDay = d;
        const groupId = `group_${baseId}_${Date.now()}`; 
-        
+       
        for (let i = 0; i < count; i++) {
           const currentAmount = i === 0 ? perMonthAmount + remainder : perMonthAmount; 
           const nextDate = new Date(y, m - 1 + i, d);
@@ -732,13 +701,15 @@ export default function App() {
   };
   const updateBudget = (category: string, value: string) => { setBudgets(prev => ({ ...prev, [category]: Number(value) })); };
 
-  // --- iOS Style Views ---
-  // CardContainer has been moved outside of App
+  // --- Views ---
 
   const renderDashboardView = () => {
-    const { emergencyFund, emergencyGoal } = stats.dashboard;
+    const { emergencyFund, emergencyGoal, installmentExpense, income } = stats.dashboard;
     const emergencyProgress = emergencyGoal > 0 ? Math.min((emergencyFund / emergencyGoal) * 100, 100) : 0;
     const isEmergencyFull = emergencyGoal > 0 && emergencyFund >= emergencyGoal;
+
+    // Simplified Installment Logic (Neutral Display)
+    const installmentRatio = income > 0 ? (installmentExpense / income) * 100 : 0;
 
     return (
       <div className="space-y-6 pb-4 pt-2">
@@ -811,6 +782,30 @@ export default function App() {
                 <span className="text-sm font-bold" style={{ color: THEME.danger }}>-${stats.dashboard.expense.toLocaleString()}</span>
              </div>
           </div>
+        </CardContainer>
+
+        {/* Installment Burden Card (Neutral Design) */}
+        <CardContainer className="p-5">
+             <div className="flex items-center justify-between mb-3">
+                 <div className="flex items-center gap-2">
+                    <Activity className="w-4 h-4 text-black" />
+                    <h3 className="font-bold text-sm text-black">分期付款負擔</h3>
+                 </div>
+             </div>
+             
+             <div className="flex items-end justify-between mb-3">
+                 <div>
+                    <span className="text-2xl font-bold text-black">${installmentExpense.toLocaleString()}</span>
+                    <span className="text-xs text-gray-400 ml-1">/ 月</span>
+                 </div>
+                 <span className="text-xs font-bold text-gray-900">
+                    佔月收入 {installmentRatio.toFixed(1)}%
+                 </span>
+             </div>
+
+             <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+                 <div className="h-full rounded-full transition-all duration-1000 bg-black" style={{ width: `${Math.min(installmentRatio, 100)}%` }}></div>
+             </div>
         </CardContainer>
 
         {/* Need vs Want Ratio Card */}
@@ -947,6 +942,7 @@ export default function App() {
     );
   }
 
+  // (renderFormView, renderHistoryView, renderInvestmentView remain mostly the same, included for completeness)
   const renderFormView = () => {
     // --- Logic Update: Investment Validation & Limits ---
     const { monthlyRemainingInvestable, cumulativeAddOnAvailable, savings } = stats.investment;
@@ -1051,6 +1047,7 @@ export default function App() {
             </div>
         </div>
 
+        {/* Investment & Payment Source Logic */}
         <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
             {formData.type === 'expense' && formData.category === '投資' ? (
                 <div className="p-5">
@@ -1303,25 +1300,15 @@ export default function App() {
         return groups;
       }, {});
 
-    // Swipe handlers
-    const handleTouchStart = (e: React.TouchEvent, id: number) => {
-        touchStartX.current = e.targetTouches[0].clientX;
-    };
+    const handleTouchStart = (e: React.TouchEvent, id: number) => { touchStartX.current = e.targetTouches[0].clientX; };
     const handleTouchMove = (e: React.TouchEvent, id: number) => {
         if (touchStartX.current === null) return;
         const currentX = e.targetTouches[0].clientX;
         const diff = touchStartX.current - currentX;
-        
-        // Simple threshold for swipe left (open) and swipe right (close)
-        if (diff > 50) { // Swiped Left
-            setSwipedId(id);
-        } else if (diff < -50) { // Swiped Right
-            if (swipedId === id) setSwipedId(null);
-        }
+        if (diff > 50) setSwipedId(id);
+        else if (diff < -50 && swipedId === id) setSwipedId(null);
     };
-    const handleTouchEnd = () => {
-        touchStartX.current = null;
-    };
+    const handleTouchEnd = () => { touchStartX.current = null; };
 
     return (
       <div className="space-y-6 pb-4 pt-2">
@@ -1354,12 +1341,10 @@ export default function App() {
                     onTouchMove={(e) => handleTouchMove(e, t.id)}
                     onTouchEnd={handleTouchEnd}
                 >
-                    {/* Background Delete Button */}
                     <div className="absolute inset-y-0 right-0 w-24 bg-[#FF3B30] flex items-center justify-center z-0" onClick={(e) => requestDelete(e, t.id)}>
                         <Trash2 className="w-6 h-6 text-white" />
                     </div>
 
-                    {/* Foreground Content */}
                     <div 
                         onClick={() => openEditMode(t)} 
                         className={`p-4 flex justify-between items-center bg-white relative z-10 transition-transform duration-300 ease-out ${swipedId === t.id ? '-translate-x-24' : 'translate-x-0'} active:bg-gray-50`}
@@ -1400,9 +1385,7 @@ export default function App() {
 
   const renderInvestmentView = () => (
     <div className="relative pt-2">
-       {/* Portfolio Card - Dark Theme (Using Screenshot Colors) */}
        <div className="p-7 rounded-[28px] text-white shadow-2xl relative overflow-hidden mb-6" style={{ backgroundColor: THEME.darkBg }}>
-        {/* Decorative elements */}
         <div className="absolute top-[-20%] right-[-20%] w-[80%] h-[80%] bg-white/5 blur-[60px] rounded-full pointer-events-none"></div>
         
         <div className="relative z-10">
@@ -1471,7 +1454,6 @@ export default function App() {
         </div>
       </div>
        
-      {/* Cash Savings - Cream Theme */}
       <div className="p-5 rounded-2xl shadow-sm border border-[#FEEBC8]" style={{ backgroundColor: THEME.creamBg }}>
         <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2 text-[#975A16]">
@@ -1500,7 +1482,6 @@ export default function App() {
   );
 
   const renderSettingsView = () => {
-    // 內部輔助函式：處理數值輸入，確保只接受數字且自動轉型
     const handleStatChange = (field: keyof StatsData, value: string) => {
         if (/^\d*$/.test(value)) {
             setInitialStats(prev => ({...prev, [field]: value === '' ? 0 : Number(value)}));
@@ -1513,7 +1494,6 @@ export default function App() {
             <h2 className="text-3xl font-extrabold text-black tracking-tight">設定</h2>
         </div>
         
-        {/* Emergency Fund Settings */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">緊急預備金</h4>
             <CardContainer className="divide-y divide-gray-50">
@@ -1545,7 +1525,6 @@ export default function App() {
             <p className="text-xs text-gray-400 mt-2 ml-2">建議設定為 3~6 個月的生活開銷</p>
         </div>
 
-        {/* Initial Assets Settings */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">初始資產配置</h4>
             <CardContainer className="divide-y divide-gray-50">
@@ -1588,7 +1567,6 @@ export default function App() {
             </CardContainer>
         </div>
 
-        {/* Monthly Budget Settings */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">每月預算設定</h4>
             <CardContainer className="divide-y divide-gray-50">
@@ -1613,7 +1591,6 @@ export default function App() {
             </CardContainer>
         </div>
 
-        {/* Data Management Section */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">資料管理</h4>
             <div 
@@ -1624,9 +1601,24 @@ export default function App() {
                 <span className="text-base font-bold text-black">匯出交易紀錄 (Excel/CSV)</span>
             </div>
         </div>
+
+        {/* Danger Zone: Reset App */}
+        <div className="pt-6">
+             <h4 className="text-xs font-bold text-red-500 uppercase tracking-wide mb-2 ml-2">危險區域</h4>
+             <div 
+                onClick={() => setResetModal(true)}
+                className="bg-red-50 rounded-2xl p-4 border border-red-100 flex items-center justify-center gap-2 cursor-pointer active:bg-red-100 transition-colors"
+            >
+                <AlertTriangle className="w-5 h-5 text-red-500" />
+                <span className="text-base font-bold text-red-600">初始化 App (清空所有資料)</span>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-2 text-center">
+                如果儲存空間滿了或發生錯誤，可使用此功能重置。
+            </p>
+        </div>
         
         <div className="py-4 text-center">
-            <p className="text-xs font-medium text-gray-300">臨界財富 v7.5</p>
+            <p className="text-xs font-medium text-gray-300">臨界財富 v8.2</p>
         </div>
         </div>
     );
@@ -1660,7 +1652,7 @@ export default function App() {
       <div className="fixed inset-0 w-full h-[100dvh] bg-[#F8F9FA] flex justify-center items-center overflow-hidden">
         {/* App Frame */}
         <div className="w-full max-w-md h-full bg-[#F8F9FA] flex flex-col relative shadow-2xl overflow-hidden select-none touch-manipulation overscroll-none" ref={scrollRef}>
-           
+            
            {/* Delete Modal */}
            {deleteModal.show && (
             <div className="absolute inset-0 z-50 flex items-center justify-center p-8 bg-black/20 backdrop-blur-sm animation-fade-in">
@@ -1677,46 +1669,49 @@ export default function App() {
             </div>
            )}
 
-           {/* Calculator Overlay - Fixed 400px height (Increased by ~15%) */}
+           {/* Reset Modal (New) */}
+           {resetModal && (
+            <div className="absolute inset-0 z-50 flex items-center justify-center p-8 bg-black/40 backdrop-blur-sm animation-fade-in">
+               <div className="bg-white/90 backdrop-blur-xl rounded-[14px] shadow-2xl w-full max-w-[270px] text-center overflow-hidden transform scale-100 transition-all">
+                  <div className="p-5">
+                      <AlertTriangle className="w-8 h-8 text-red-500 mx-auto mb-3" />
+                      <h3 className="text-[17px] font-bold text-black mb-1">確認初始化？</h3>
+                      <p className="text-[13px] text-gray-500">所有交易紀錄與設定將被永久刪除且無法復原。</p>
+                  </div>
+                  <div className="flex border-t border-gray-300/50">
+                     <button onClick={() => setResetModal(false)} className="flex-1 py-3 text-[17px] text-black font-normal border-r border-gray-300/50 active:bg-gray-100">取消</button>
+                     <button onClick={handleResetApp} className="flex-1 py-3 text-[17px] text-[#FF3B30] font-bold active:bg-gray-100">確認重置</button>
+                  </div>
+               </div>
+            </div>
+           )}
+
+           {/* Calculator Overlay */}
            {isCalculatorOpen && (
               <>
-                {/* Backdrop for clicking outside */}
                 <div 
                     className="absolute inset-0 z-40 bg-transparent"
                     onClick={() => setIsCalculatorOpen(false)}
                 ></div>
 
                 <div className="absolute inset-x-0 bottom-0 z-50 bg-black shadow-2xl animation-slide-up flex flex-col pb-[calc(env(safe-area-inset-bottom)+30px)] pt-5 px-3 h-[400px] rounded-t-[24px]">
-                    
-                    {/* Removed Header / Drag Handle */}
-
-                    {/* Keypad Grid - Compact Flat */}
                     <div className="grid grid-cols-4 gap-2 h-full">
-                        {/* Row 1 */}
                         <button onClick={() => handleCalcInput('AC')} className="h-full rounded-xl bg-white text-black text-xl font-bold active:bg-gray-200 flex items-center justify-center transition-colors">AC</button>
                         <button onClick={() => handleCalcInput('DEL')} className="h-full rounded-xl bg-white text-black text-xl font-bold active:bg-gray-200 flex items-center justify-center transition-colors"><Delete className="w-6 h-6" /></button>
                         <button onClick={() => handleCalcInput('%')} className="h-full rounded-xl bg-white text-black text-xl font-bold active:bg-gray-200 flex items-center justify-center transition-colors">%</button>
                         <button onClick={() => handleCalcInput('/')} className="h-full rounded-xl bg-black border border-white/20 text-white text-2xl font-bold pb-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">÷</button>
-
-                        {/* Row 2 */}
                         <button onClick={() => handleCalcInput('7')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">7</button>
                         <button onClick={() => handleCalcInput('8')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">8</button>
                         <button onClick={() => handleCalcInput('9')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">9</button>
                         <button onClick={() => handleCalcInput('*')} className="h-full rounded-xl bg-black border border-white/20 text-white text-2xl font-bold pt-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">×</button>
-
-                        {/* Row 3 */}
                         <button onClick={() => handleCalcInput('4')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">4</button>
                         <button onClick={() => handleCalcInput('5')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">5</button>
                         <button onClick={() => handleCalcInput('6')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">6</button>
                         <button onClick={() => handleCalcInput('-')} className="h-full rounded-xl bg-black border border-white/20 text-white text-3xl font-bold pb-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">-</button>
-
-                        {/* Row 4 */}
                         <button onClick={() => handleCalcInput('1')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">1</button>
                         <button onClick={() => handleCalcInput('2')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">2</button>
                         <button onClick={() => handleCalcInput('3')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">3</button>
                         <button onClick={() => handleCalcInput('+')} className="h-full rounded-xl bg-black border border-white/20 text-white text-2xl font-bold pb-0.5 active:bg-gray-800 flex items-center justify-center transition-colors">+</button>
-                        
-                        {/* Row 5 */}
                         <button onClick={() => handleCalcInput('0')} className="col-span-2 h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center pl-6 transition-colors">0</button>
                         <button onClick={() => handleCalcInput('.')} className="h-full rounded-xl bg-white text-black text-2xl font-semibold active:bg-gray-200 flex items-center justify-center transition-colors">.</button>
                         <button onClick={() => handleCalcInput('=')} className="h-full rounded-xl bg-black border border-white/20 text-white text-2xl font-bold active:bg-gray-800 flex items-center justify-center transition-colors">=</button>
