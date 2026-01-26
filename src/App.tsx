@@ -439,7 +439,6 @@ export default function App() {
         emergencyFund: runningEmergencyFund, divertedToEmergency: 0, repaidDeficit: 0, capitalDivertedToEmergency: 0, emergencyGoal: emergencyGoal
     };
 
-    // [修正] 加入 .sort() 依據 value (金額) 由大到小排序
     const pieData = Object.keys(currentData.categoryMap)
       .map(key => ({ name: key, value: currentData.categoryMap[key] }))
       .sort((a, b) => b.value - a.value);
@@ -882,6 +881,10 @@ export default function App() {
         return true;
     });
 
+    // [NEW] 計算目前視圖中的總支出與想要佔比
+    const visibleExpense = filtered.reduce((acc, t) => (t.type === 'expense' && t.category !== '投資') ? acc + Number(t.amount) : acc, 0);
+    const visibleWant = filtered.reduce((acc, t) => (t.type === 'expense' && t.category !== '投資' && t.tag === 'want') ? acc + Number(t.amount) : acc, 0);
+
     const groupedTransactions = filtered.reduce((groups: { [key: string]: Transaction[] }, t) => {
         const date = new Date(t.date);
         const key = `${date.getFullYear()}年${date.getMonth() + 1}月`;
@@ -897,7 +900,19 @@ export default function App() {
     return (
       <div className="space-y-6 pb-4 pt-2">
         <div className="flex justify-between items-end px-1">
-          <div><h2 className="text-3xl font-extrabold text-black tracking-tight">歷史紀錄</h2><p className="text-xs font-semibold text-gray-400 mt-1">{filtered.length} 筆紀錄 {hideFuture && '(已隱藏未到期)'}</p></div>
+          <div>
+            <h2 className="text-3xl font-extrabold text-black tracking-tight">歷史紀錄</h2>
+            <div className="flex flex-col gap-0.5 mt-1">
+                <p className="text-xs font-semibold text-gray-400">{filtered.length} 筆紀錄 {hideFuture && '(已隱藏未到期)'}</p>
+                {/* [NEW] 新增顯示「想要」花費摘要，幫助使用者掌握特定分類金錢去向 */}
+                {visibleExpense > 0 && (
+                    <div className="flex items-center gap-2 mt-1 animate-fade-in">
+                        <span className="text-[11px] font-bold text-gray-400">總支出 ${formatMoney(visibleExpense)}</span>
+                        <span className="text-[11px] font-bold text-[#D53F8C] bg-[#FFF5F7] px-1.5 rounded-md">其中想要 ${formatMoney(visibleWant)} ({Math.round((visibleWant/visibleExpense)*100)}%)</span>
+                    </div>
+                )}
+            </div>
+          </div>
           <button onClick={() => setHideFuture(!hideFuture)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${!hideFuture ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200'}`}>
             {!hideFuture ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}{!hideFuture ? '隱藏未到期' : '顯示全部'}
           </button>
