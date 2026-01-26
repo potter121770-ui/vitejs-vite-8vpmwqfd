@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
@@ -124,6 +124,8 @@ export default function App() {
   const [hideFuture, setHideFuture] = useState(true);
   // [NEW] 新增篩選分類狀態
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
+  // [NEW] 新增「只看想要」篩選狀態
+  const [showWantOnly, setShowWantOnly] = useState(false);
     
   // --- iOS App-Like Behavior Hook ---
   useEffect(() => {
@@ -874,10 +876,12 @@ export default function App() {
   const renderHistoryView = () => {
     const sorted = transactions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     const today = getLocalDayString(); 
-    // [NEW] 支援分類篩選
+    // [NEW] 支援分類篩選與想要篩選
     const filtered = sorted.filter(t => {
         if (hideFuture && t.date > today) return false;
         if (filterCategory && t.category !== filterCategory) return false;
+        // [NEW] 如果開啟「只看想要」，過濾掉 tag 不是 want 的項目
+        if (showWantOnly && t.tag !== 'want') return false;
         return true;
     });
 
@@ -899,23 +903,21 @@ export default function App() {
 
     return (
       <div className="space-y-6 pb-4 pt-2">
-        <div className="flex justify-between items-end px-1">
+        <div className="flex justify-between items-center px-1">
           <div>
             <h2 className="text-3xl font-extrabold text-black tracking-tight">歷史紀錄</h2>
-            <div className="flex flex-col gap-0.5 mt-1">
-                <p className="text-xs font-semibold text-gray-400">{filtered.length} 筆紀錄 {hideFuture && '(已隱藏未到期)'}</p>
-                {/* [NEW] 新增顯示「想要」花費摘要，幫助使用者掌握特定分類金錢去向 */}
-                {visibleExpense > 0 && (
-                    <div className="flex items-center gap-2 mt-1 animate-fade-in">
-                        <span className="text-[11px] font-bold text-gray-400">總支出 ${formatMoney(visibleExpense)}</span>
-                        <span className="text-[11px] font-bold text-[#D53F8C] bg-[#FFF5F7] px-1.5 rounded-md">其中想要 ${formatMoney(visibleWant)} ({Math.round((visibleWant/visibleExpense)*100)}%)</span>
-                    </div>
-                )}
-            </div>
+            <p className="text-xs font-semibold text-gray-400 mt-1">{filtered.length} 筆紀錄 {hideFuture && '(已隱藏未到期)'}</p>
           </div>
-          <button onClick={() => setHideFuture(!hideFuture)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${!hideFuture ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200'}`}>
-            {!hideFuture ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}{!hideFuture ? '隱藏未到期' : '顯示全部'}
-          </button>
+          {/* [NEW] 「只看想要」切換按鈕 */}
+          <div className="flex gap-2">
+            <button onClick={() => setShowWantOnly(!showWantOnly)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${showWantOnly ? 'bg-[#D53F8C] text-white border-[#D53F8C]' : 'bg-white text-[#D53F8C] border-gray-200 hover:bg-[#FFF5F7]'}`}>
+                {showWantOnly ? <Heart className="w-3.5 h-3.5 fill-current" /> : <Heart className="w-3.5 h-3.5" />}
+                {showWantOnly ? '只看想要' : '篩選想要'}
+            </button>
+            <button onClick={() => setHideFuture(!hideFuture)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${!hideFuture ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200'}`}>
+                {!hideFuture ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}{!hideFuture ? '隱藏未到期' : '全部'}
+            </button>
+          </div>
         </div>
         
         {/* [NEW] 顯示目前篩選狀態 */}
