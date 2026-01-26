@@ -32,7 +32,7 @@ interface StatsData {
 }
 
 interface MonthlyData {
-  income: number;          
+  income: number;           
   assetLiquidation: number; 
   expense: number;         
   installmentExpense: number; 
@@ -391,7 +391,7 @@ export default function App() {
       let deficitDeducted = 0;
       let repaidDeficit = 0;
       let divertedToEmergency = 0; 
-       
+        
       if (netIncome < 0) {
         const deficit = Math.abs(netIncome);
         deficitDeducted = deficit;
@@ -439,7 +439,10 @@ export default function App() {
         emergencyFund: runningEmergencyFund, divertedToEmergency: 0, repaidDeficit: 0, capitalDivertedToEmergency: 0, emergencyGoal: emergencyGoal
     };
 
-    const pieData = Object.keys(currentData.categoryMap).map(key => ({ name: key, value: currentData.categoryMap[key] }));
+    // [修正] 加入 .sort() 依據 value (金額) 由大到小排序
+    const pieData = Object.keys(currentData.categoryMap)
+      .map(key => ({ name: key, value: currentData.categoryMap[key] }))
+      .sort((a, b) => b.value - a.value);
 
     return { dashboard: { ...currentData, pieData }, investment: currentData };
   }, [transactions, initialStats, selectedMonth, availableMonths]);
@@ -502,7 +505,7 @@ export default function App() {
                   let newDate = t.date;
                   
                   if (t.date !== formData.date && t.id === editingId) {
-                       newDate = formData.date;
+                        newDate = formData.date;
                   } else if (t.date !== formData.date) { 
                       const oldEditDateObj = new Date(originalTrans.date);
                       const newEditDateObj = new Date(formData.date);
