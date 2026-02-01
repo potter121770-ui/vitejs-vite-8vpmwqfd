@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart, ShieldAlert, Tag } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
@@ -16,6 +16,7 @@ interface Transaction {
   groupId?: string;
   investSource?: 'monthly' | 'cumulative';
   fromSavings?: boolean; 
+  fromEmergency?: boolean; 
   isAssetLiquidation?: boolean; 
 }
 
@@ -37,6 +38,7 @@ interface MonthlyData {
   expense: number;         
   installmentExpense: number; 
   savingsExpense: number;  
+  emergencyExpense: number;
   actualInvested: number;
   investedFromMonthly: number; 
   investedFromCumulative: number; 
@@ -87,8 +89,9 @@ const INITIAL_STATS_DATA: StatsData = {
   initialInvestable: 0 
 };
 
-const CATEGORIES = [
-  '房租', '飲食', '交通', '電子產品', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療', '收入'
+// [NEW] 預設支出分類 (不含收入與投資，這兩者為系統保留)
+const DEFAULT_EXPENSE_CATEGORIES = [
+  '房租', '飲食', '交通', '電子產品', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療'
 ];
 
 const COLORS = ['#C59D5F', '#8B5E3C', '#588157', '#E9C46A', '#F4A261', '#E76F51', '#2A9D8F', '#264653', '#AAB3AB', '#B5838D'];
@@ -122,9 +125,7 @@ const CardContainer = ({ children, className = '' }: { children: React.ReactNode
 export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [hideFuture, setHideFuture] = useState(true);
-  // [NEW] 新增篩選分類狀態
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
-  // [NEW] 新增「只看想要」篩選狀態
   const [showWantOnly, setShowWantOnly] = useState(false);
     
   // --- iOS App-Like Behavior Hook ---
@@ -143,6 +144,15 @@ export default function App() {
   }, []);
 
   // --- State Initialization ---
+  
+  // [NEW] 自訂分類 State
+  const [expenseCategories, setExpenseCategories] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('yupao_categories_v2');
+      return saved ? JSON.parse(saved) : DEFAULT_EXPENSE_CATEGORIES;
+    } catch (e) { return DEFAULT_EXPENSE_CATEGORIES; }
+  });
+
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
       const saved = localStorage.getItem('yupao_transactions_v2');
@@ -168,6 +178,8 @@ export default function App() {
   useEffect(() => { localStorage.setItem('yupao_transactions_v2', JSON.stringify(transactions)); }, [transactions]);
   useEffect(() => { localStorage.setItem('yupao_stats_v2', JSON.stringify(initialStats)); }, [initialStats]);
   useEffect(() => { localStorage.setItem('yupao_budgets_v2', JSON.stringify(budgets)); }, [budgets]);
+  // [NEW] 儲存分類
+  useEffect(() => { localStorage.setItem('yupao_categories_v2', JSON.stringify(expenseCategories)); }, [expenseCategories]);
 
   const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
   const [resetModal, setResetModal] = useState(false);
@@ -176,6 +188,9 @@ export default function App() {
   const touchStartX = useRef<number | null>(null);
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  // [NEW] 新增分類的輸入狀態
+  const [newCategoryInput, setNewCategoryInput] = useState('');
 
   const availableMonths = useMemo(() => {
     const months = new Set(transactions.map(t => t.date.substring(0, 7)));
@@ -192,7 +207,7 @@ export default function App() {
   // Form State
   const [formData, setFormData] = useState({
     date: getLocalDayString(),
-    category: '飲食',
+    category: expenseCategories[0] || '飲食', // [MODIFIED] 使用動態分類的第一個
     amount: '',
     note: '',
     tag: 'need' as 'need' | 'want' | 'income', 
@@ -203,6 +218,7 @@ export default function App() {
     perMonthInput: '',
     investSource: 'monthly' as 'monthly' | 'cumulative',
     fromSavings: false, 
+    fromEmergency: false, 
     isAssetLiquidation: false, 
   });
     
@@ -236,6 +252,7 @@ export default function App() {
         let specialLabel = '一般月收支';
         if (t.category === '投資') specialLabel = t.investSource === 'cumulative' ? '累積資金投資' : '當月額度投資';
         else if (t.fromSavings) specialLabel = '存款支付';
+        else if (t.fromEmergency) specialLabel = '預備金支付';
         else if (t.isAssetLiquidation) specialLabel = '資產變現';
 
         const row = [
@@ -261,6 +278,7 @@ export default function App() {
       localStorage.removeItem('yupao_transactions_v2');
       localStorage.removeItem('yupao_stats_v2');
       localStorage.removeItem('yupao_budgets_v2');
+      localStorage.removeItem('yupao_categories_v2'); // [NEW] Reset categories
       window.location.reload();
   };
 
@@ -324,13 +342,13 @@ export default function App() {
     let monthlyRawData: { [key: string]: MonthlyData } = {};
     
     availableMonths.forEach(m => {
-        monthlyRawData[m] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
+        monthlyRawData[m] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
     });
 
     transactions.forEach(t => {
       const monthKey = t.date.substring(0, 7);
       if (!monthlyRawData[monthKey]) {
-          monthlyRawData[monthKey] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
+          monthlyRawData[monthKey] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
       }
       const amount = Number(t.amount);
       if (t.category === '收入') {
@@ -342,6 +360,7 @@ export default function App() {
          else monthlyRawData[monthKey].investedFromMonthly += amount;
       } else {
         if (t.fromSavings) monthlyRawData[monthKey].savingsExpense += amount;
+        else if (t.fromEmergency) monthlyRawData[monthKey].emergencyExpense += amount;
         else {
             monthlyRawData[monthKey].expense += amount;
             if (t.groupId) monthlyRawData[monthKey].installmentExpense += amount;
@@ -364,7 +383,7 @@ export default function App() {
         while (curY < maxY || (curY === maxY && curM <= maxM)) {
             const key = `${curY}-${String(curM).padStart(2, '0')}`;
             if (!monthlyRawData[key]) {
-                monthlyRawData[key] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
+                monthlyRawData[key] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
             }
             curM++;
             if (curM > 12) { curM = 1; curY++; }
@@ -381,12 +400,14 @@ export default function App() {
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     sortedMonthsAsc.forEach(month => {
-      const { income, assetLiquidation, expense, installmentExpense, savingsExpense, actualInvested, investedFromMonthly, investedFromCumulative, categoryMap, need, want } = monthlyRawData[month];
+      const { income, assetLiquidation, expense, installmentExpense, savingsExpense, emergencyExpense, actualInvested, investedFromMonthly, investedFromCumulative, categoryMap, need, want } = monthlyRawData[month];
       const netIncome = income - expense; 
       let monthlyMaxInvestable = carryOverBudget; 
       let currentMonthCumulativeRemaining = cumulativeInvestable - investedFromCumulative;
       let currentMonthMonthlyRemaining = monthlyMaxInvestable - investedFromMonthly;
       cumulativeSavings = cumulativeSavings + assetLiquidation - savingsExpense;
+      
+      runningEmergencyFund -= emergencyExpense;
 
       let surplusForNextMonth = 0; 
       let currentMonthSavingsAddon = 0; 
@@ -425,7 +446,7 @@ export default function App() {
       carryOverBudget = surplusForNextMonth;
 
       processedMonthsData[month] = {
-          income, assetLiquidation, expense, installmentExpense, savingsExpense, netIncome, categoryMap,
+          income, assetLiquidation, expense, installmentExpense, savingsExpense, emergencyExpense, netIncome, categoryMap,
           actualInvested, investedFromMonthly, investedFromCumulative, need, want, monthlyMaxInvestable,
           monthlyRemainingInvestable: currentMonthMonthlyRemaining, cumulativeAddOnAvailable: currentMonthCumulativeRemaining, 
           deficitDeducted, accumulatedDeficit: unfilledDeficit, savings: cumulativeSavings, emergencyFund: runningEmergencyFund,
@@ -434,7 +455,7 @@ export default function App() {
     });
 
     const currentData = processedMonthsData[selectedMonth] || {
-        income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, netIncome: 0, categoryMap: {}, 
+        income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, netIncome: 0, categoryMap: {}, 
         actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0,
         monthlyMaxInvestable: carryOverBudget, monthlyRemainingInvestable: carryOverBudget - 0, 
         cumulativeAddOnAvailable: cumulativeInvestable, deficitDeducted: 0, accumulatedDeficit: unfilledDeficit, savings: cumulativeSavings, 
@@ -452,9 +473,9 @@ export default function App() {
   const openAddMode = () => {
     setEditingId(null);
     setFormData({ 
-      date: getLocalDayString(), category: '飲食', amount: '', note: '', tag: 'need', type: 'expense',
+      date: getLocalDayString(), category: expenseCategories[0] || '飲食', amount: '', note: '', tag: 'need', type: 'expense',
       isInstallment: false, installmentCount: '3', installmentCalcType: 'total', perMonthInput: '',
-      investSource: 'monthly', fromSavings: false, isAssetLiquidation: false,
+      investSource: 'monthly', fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
     });
     setActiveTab('form');
   };
@@ -467,12 +488,11 @@ export default function App() {
       date: trans.date, category: trans.category, amount: trans.amount.toString(), 
       note: trans.note.replace(/\(\d+\/\d+\)$/, '').trim(), tag: trans.tag as any, type: trans.type,
       isInstallment: false, installmentCount: '3', installmentCalcType: 'total', perMonthInput: '',
-      investSource: source, fromSavings: trans.fromSavings || false, isAssetLiquidation: trans.isAssetLiquidation || false,
+      investSource: source, fromSavings: trans.fromSavings || false, fromEmergency: trans.fromEmergency || false, isAssetLiquidation: trans.isAssetLiquidation || false,
     });
     setActiveTab('form');
   };
 
-  // [NEW] 跳轉至明細並過濾分類
   const jumpToHistoryCategory = (category: string) => {
       setFilterCategory(category);
       setActiveTab('history');
@@ -481,6 +501,25 @@ export default function App() {
   const handleFabClick = () => {
     if (activeTab === 'form' && !editingId) setActiveTab('dashboard');
     else openAddMode();
+  };
+
+  // [NEW] 新增分類邏輯
+  const handleAddCategory = () => {
+      if (!newCategoryInput.trim()) return;
+      if (expenseCategories.includes(newCategoryInput.trim())) return; // 避免重複
+      setExpenseCategories([...expenseCategories, newCategoryInput.trim()]);
+      setNewCategoryInput('');
+  };
+
+  // [NEW] 移除分類邏輯
+  const handleRemoveCategory = (catToRemove: string) => {
+      setExpenseCategories(expenseCategories.filter(c => c !== catToRemove));
+      // 同步移除該分類的預算設定，避免成為殭屍設定
+      if (budgets[catToRemove]) {
+          const newBudgets = { ...budgets };
+          delete newBudgets[catToRemove];
+          setBudgets(newBudgets);
+      }
   };
 
   const handleSave = () => {
@@ -520,7 +559,7 @@ export default function App() {
                           ...t, date: newDate, category: formData.category,
                           amount: Number(finalAmount), tag: finalTag, 
                           note: formData.note, 
-                          fromSavings: formData.fromSavings, isAssetLiquidation: formData.isAssetLiquidation,
+                          fromSavings: formData.fromSavings, fromEmergency: formData.fromEmergency, isAssetLiquidation: formData.isAssetLiquidation,
                       };
                   } else {
                       return {
@@ -529,6 +568,7 @@ export default function App() {
                           category: formData.category,
                           tag: finalTag,
                           fromSavings: formData.fromSavings,
+                          fromEmergency: formData.fromEmergency,
                           isAssetLiquidation: formData.isAssetLiquidation,
                       };
                   }
@@ -537,7 +577,7 @@ export default function App() {
           });
           setTransactions(updatedTransactions);
       } else {
-          setTransactions(transactions.map(t => t.id === editingId ? { ...t, ...formData, tag: finalTag, amount: Number(finalAmount), fromSavings: formData.fromSavings, isAssetLiquidation: formData.isAssetLiquidation } : t));
+          setTransactions(transactions.map(t => t.id === editingId ? { ...t, ...formData, tag: finalTag, amount: Number(finalAmount), fromSavings: formData.fromSavings, fromEmergency: formData.fromEmergency, isAssetLiquidation: formData.isAssetLiquidation } : t));
       }
       setActiveTab('history');
       return;
@@ -545,7 +585,7 @@ export default function App() {
     
     const baseId = transactions.length > 0 ? Math.max(...transactions.map(t => t.id)) + 1 : 1;
     const totalAmount = Number(finalAmount);
-    const shouldInstallment = !formData.fromSavings && !formData.isAssetLiquidation && formData.isInstallment && formData.type === 'expense' && formData.category !== '投資' && Number(formData.installmentCount) > 1;
+    const shouldInstallment = !formData.fromSavings && !formData.fromEmergency && !formData.isAssetLiquidation && formData.isInstallment && formData.type === 'expense' && formData.category !== '投資' && Number(formData.installmentCount) > 1;
 
     if (shouldInstallment) {
        const newTransactions: Transaction[] = [];
@@ -563,7 +603,7 @@ export default function App() {
           
           newTransactions.push({
              id: baseId + i, ...formData, date: formatDateToLocal(nextDate), amount: currentAmount,
-             note: `${formData.note} (${i + 1}/${count})`, groupId: groupId, tag: finalTag, fromSavings: false, isAssetLiquidation: false,
+             note: `${formData.note} (${i + 1}/${count})`, groupId: groupId, tag: finalTag, fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
           });
        }
        setTransactions([...newTransactions, ...transactions]);
@@ -591,8 +631,17 @@ export default function App() {
     const isEmergencyFull = emergencyGoal > 0 && emergencyFund >= emergencyGoal;
     const installmentRatio = income > 0 ? (installmentExpense / income) * 100 : 0;
 
+    // [UI一致性設定] 定義統一的標題樣式
+    // text-[15px] 讓它比內文大，text-gray-900 讓它夠黑夠清楚
+    const cardTitleStyle = "text-[15px] font-bold text-gray-900 mb-1"; 
+    
+    // [UI一致性設定] 次級資訊樣式 (用於 Need/Want 或 收入/支出 標籤)
+    const cardSubLabelStyle = "text-[11px] font-bold text-gray-400 uppercase tracking-wider";
+    
+    const cardContainerStyle = "px-5 py-3.5"; 
+
     return (
-      <div className="space-y-6 pb-4 pt-2">
+      <div className="space-y-4 pb-4 pt-2">
         <div className="flex justify-start items-center px-1">
             <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}
               className="bg-white text-black font-bold text-sm rounded-full px-4 py-2 border border-gray-200 outline-none shadow-sm appearance-none pr-8 relative z-10"
@@ -600,110 +649,141 @@ export default function App() {
               {availableMonths.map(m => ( <option key={m} value={m}>{m}</option> ))}
             </select>
         </div>
-        <div className="p-6 rounded-[24px] text-white relative overflow-hidden shadow-xl" style={{ backgroundColor: THEME.darkBg }}>
+
+        {/* 緊急預備金 - 這是 Hero Card，保持深色背景設計，標題微調大小以對齊視覺重量 */}
+        <div className="p-5 rounded-[24px] text-white relative overflow-hidden shadow-xl" style={{ backgroundColor: THEME.darkBg }}>
            <div className="relative z-10">
-              <div className="flex justify-between items-start mb-6">
+              <div className="flex justify-between items-start mb-4">
                  <div>
-                    <h2 className="text-sm font-medium opacity-80 flex items-center gap-2 mb-2"><Shield className="w-4 h-4" /> 緊急預備金</h2>
+                    {/* 微調：將標題字體稍微加大到 text-sm (14px) 以接近其他卡片的 text-[15px] */}
+                    <h2 className="text-sm font-bold opacity-90 mb-1">緊急預備金</h2>
                     <div className="flex items-baseline gap-2">
-                        <span className="text-3xl font-bold tracking-tight text-white">${formatMoney(Math.floor(emergencyFund))}</span>
-                        {emergencyGoal > 0 ? <span className="text-sm opacity-50 font-medium">/ ${formatMoney(emergencyGoal)}</span> : <button onClick={() => setActiveTab('settings')} className="text-xs font-bold text-[#F6AD55] bg-white/10 px-2 py-1 rounded hover:bg-white/20 transition ml-2">請設定目標</button>}
+                        <span className="text-2xl font-bold tracking-tight text-white">${formatMoney(Math.floor(emergencyFund))}</span>
+                        {emergencyGoal > 0 ? <span className="text-xs opacity-50 font-medium">/ ${formatMoney(emergencyGoal)}</span> : <button onClick={() => setActiveTab('settings')} className="text-[10px] font-bold text-[#F6AD55] bg-white/10 px-2 py-1 rounded hover:bg-white/20 transition ml-2">請設定目標</button>}
                     </div>
                  </div>
-                 {emergencyGoal > 0 && (isEmergencyFull ? <div className="bg-white/20 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-1.5 text-white"><CheckCircle className="w-3.5 h-3.5" /> 已達標</div> : <div className="bg-orange-500/20 text-orange-400 border border-orange-500/30 backdrop-blur-md px-3 py-1.5 rounded-full text-xs font-bold animate-pulse">補水中</div>)}
+                 {emergencyGoal > 0 && (isEmergencyFull ? <div className="bg-white/20 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold flex items-center gap-1 text-white"><CheckCircle className="w-3 h-3" /> 已達標</div> : <div className="bg-orange-500/20 text-orange-400 border border-orange-500/30 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-bold animate-pulse">補水中</div>)}
               </div>
-              <div className="w-full bg-white/10 rounded-full h-2.5 mb-2 overflow-hidden">
+              <div className="w-full bg-white/10 rounded-full h-2 mb-1.5 overflow-hidden">
                  <div className="h-full rounded-full transition-all duration-1000" style={{ width: `${emergencyProgress}%`, backgroundColor: isEmergencyFull ? THEME.success : '#F6AD55' }}></div>
               </div>
-              <p className="text-[11px] opacity-60 text-right">{isEmergencyFull ? '資金充裕' : '優先級：所有閒置資金 > 緊急預備金'}</p>
+              <p className="text-[10px] opacity-60 text-right">{isEmergencyFull ? '資金充裕' : '優先級：所有閒置資金 > 緊急預備金'}</p>
            </div>
         </div>
-        <CardContainer className="p-5 flex justify-between items-center">
-          <div>
-            <p className="text-[11px] font-bold text-gray-400 uppercase tracking-wider mb-1">淨收支</p>
+
+        {/* 淨收支卡片 - 【修改重點】標題樣式統一 */}
+        <CardContainer className={`${cardContainerStyle} flex justify-between items-center`}>
+           <div>
+            <h3 className={cardTitleStyle}>本月淨收支</h3>
             <p className={`text-3xl font-bold tracking-tight ${stats.dashboard.netIncome >= 0 ? 'text-gray-900' : 'text-[#F56565]'}`}>
               {stats.dashboard.netIncome >= 0 ? '+' : ''}{formatMoney(stats.dashboard.netIncome)}
             </p>
           </div>
           <div className="text-right space-y-1">
              <div className="flex items-center gap-2 justify-end">
-                <span className="text-[10px] font-bold text-gray-400 uppercase">收入</span>
-                <span className="text-sm font-bold" style={{ color: THEME.success }}>+${formatMoney(stats.dashboard.income)}</span>
+                <span className={cardSubLabelStyle}>收入</span>
+                <span className="text-sm font-bold tabular-nums" style={{ color: THEME.success }}>+${formatMoney(stats.dashboard.income)}</span>
              </div>
              <div className="flex items-center gap-2 justify-end">
-                <span className="text-[10px] font-bold text-gray-400 uppercase">支出</span>
-                <span className="text-sm font-bold" style={{ color: THEME.danger }}>-${formatMoney(stats.dashboard.expense)}</span>
+                <span className={cardSubLabelStyle}>支出</span>
+                <span className="text-sm font-bold tabular-nums" style={{ color: THEME.danger }}>-${formatMoney(stats.dashboard.expense)}</span>
              </div>
           </div>
         </CardContainer>
-        <CardContainer className="p-5">
+
+        {/* 分期付款卡片 - 標題樣式已統一 */}
+        <CardContainer className={cardContainerStyle}>
              <div className="flex items-center justify-between mb-3">
-                 <div className="flex items-center gap-2"><Activity className="w-4 h-4 text-black" /><h3 className="font-bold text-sm text-black">分期付款負擔</h3></div>
+                 <h3 className={cardTitleStyle}>分期付款負擔</h3>
+                 <span className="text-[10px] font-medium text-gray-400 bg-gray-50 px-2 py-0.5 rounded-md">佔月收入 {installmentRatio.toFixed(1)}%</span>
              </div>
-             <div className="flex items-end justify-between mb-3">
-                 <div><span className="text-2xl font-bold text-black">${formatMoney(installmentExpense)}</span><span className="text-xs text-gray-400 ml-1">/ 月</span></div>
-                 <span className="text-xs font-bold text-gray-900">佔月收入 {installmentRatio.toFixed(1)}%</span>
+             <div className="flex items-baseline gap-1 mb-2">
+                 <span className="text-2xl font-bold text-black tracking-tight">${formatMoney(installmentExpense)}</span>
+                 <span className="text-xs text-gray-400 font-medium">/ 月</span>
              </div>
-             <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
+             <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
                  <div className="h-full rounded-full transition-all duration-1000 bg-black" style={{ width: `${Math.min(installmentRatio, 100)}%` }}></div>
              </div>
         </CardContainer>
-        <CardContainer className="p-5">
-           <div className="flex items-center justify-between mb-4"><h3 className="font-bold text-lg text-black">消費性質分析</h3></div>
-           <div className="flex h-4 w-full rounded-full overflow-hidden bg-gray-100 mb-4">
+
+        {/* 消費性質分析 - 標題樣式已統一 */}
+        <CardContainer className={cardContainerStyle}>
+           <div className="flex items-center justify-between mb-4">
+               <h3 className={cardTitleStyle}>消費性質分析</h3>
+           </div>
+           
+           <div className="flex h-2.5 w-full rounded-full overflow-hidden bg-gray-100 mb-4">
              <div className="h-full bg-black transition-all duration-1000 ease-out" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.need / stats.dashboard.expense * 100) : 0}%` }}></div>
              <div className="h-full bg-[#C59D5F] transition-all duration-1000 ease-out" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.want / stats.dashboard.expense * 100) : 0}%` }}></div>
            </div>
-           <div className="flex justify-between items-center">
-              <div className="flex flex-col gap-1">
-                 <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-black"></div><span className="text-xs font-bold text-gray-500 uppercase tracking-wider">需要 (Need)</span></div>
-                 <div className="flex items-baseline gap-1">
-                    <span className="text-xl font-bold text-black">${formatMoney(stats.dashboard.need)}</span>
-                    <span className="text-xs font-medium text-gray-400">({stats.dashboard.expense > 0 ? ((stats.dashboard.need / stats.dashboard.expense) * 100).toFixed(0) : 0}%)</span>
+
+           <div className="flex justify-between items-end">
+              <div className="flex flex-col gap-0.5">
+                 <div className="flex items-center gap-1.5">
+                     <div className="w-1.5 h-1.5 rounded-full bg-black"></div>
+                     {/* 這裡保持 SubLabel 樣式，因為它是圖表說明 */}
+                     <span className={cardSubLabelStyle}>Need (需要)</span>
+                 </div>
+                 <div className="flex items-baseline gap-1.5">
+                    <span className="text-xl font-bold text-gray-900">${formatMoney(stats.dashboard.need)}</span>
+                    <span className="text-[10px] font-medium text-gray-400">
+                        {stats.dashboard.expense > 0 ? ((stats.dashboard.need / stats.dashboard.expense) * 100).toFixed(0) : 0}%
+                    </span>
                  </div>
               </div>
-              <div className="flex flex-col gap-1 items-end text-right">
-                 <div className="flex items-center gap-2"><span className="text-xs font-bold text-gray-500 uppercase tracking-wider">想要 (Want)</span><div className="w-2 h-2 rounded-full bg-[#C59D5F]"></div></div>
-                 <div className="flex items-baseline gap-1 justify-end">
+
+              <div className="flex flex-col gap-0.5 items-end">
+                 <div className="flex items-center gap-1.5">
+                     <span className={cardSubLabelStyle}>Want (想要)</span>
+                     <div className="w-1.5 h-1.5 rounded-full bg-[#C59D5F]"></div>
+                 </div>
+                 <div className="flex items-baseline gap-1.5 justify-end">
                     <span className="text-xl font-bold text-[#C59D5F]">${formatMoney(stats.dashboard.want)}</span>
-                    <span className="text-xs font-medium text-gray-400">({stats.dashboard.expense > 0 ? ((stats.dashboard.want / stats.dashboard.expense) * 100).toFixed(0) : 0}%)</span>
+                    <span className="text-[10px] font-medium text-gray-400">
+                        {stats.dashboard.expense > 0 ? ((stats.dashboard.want / stats.dashboard.expense) * 100).toFixed(0) : 0}%
+                    </span>
                  </div>
               </div>
            </div>
         </CardContainer>
-        <CardContainer className="p-5">
-          <div className="flex justify-between items-center mb-6"><h3 className="font-bold text-lg text-black">預算執行狀況</h3><button onClick={() => setActiveTab('settings')} className="text-xs font-bold text-black bg-gray-100 px-3 py-1.5 rounded-lg">編輯</button></div>
-          <div className="space-y-6">
+
+        {/* 預算執行狀況 - 標題樣式已統一 */}
+        <CardContainer className={cardContainerStyle}>
+          <div className="flex justify-between items-center mb-4">
+              <h3 className={cardTitleStyle}>預算執行狀況</h3>
+              <button onClick={() => setActiveTab('settings')} className="text-[10px] font-bold text-black bg-gray-100 px-2.5 py-1 rounded-md hover:bg-gray-200 transition">編輯</button>
+          </div>
+          <div className="space-y-4">
             {Object.entries(budgets).filter(([_, budget]) => (budget as number) > 0).map(([cat, budget]) => {
                 const currentMonthTransactions = transactions.filter(t => t.date.startsWith(selectedMonth));
-                const spent = currentMonthTransactions.filter(t => t.category === cat && !t.fromSavings).reduce((sum, t) => sum + Number(t.amount), 0);
+                const spent = currentMonthTransactions.filter(t => t.category === cat && !t.fromSavings && !t.fromEmergency).reduce((sum, t) => sum + Number(t.amount), 0);
                 const percent = Math.min((spent / (budget as number)) * 100, 100);
                 const isOver = spent > (budget as number);
                 return (
                 <div key={cat} className="group">
-                    <div className="flex justify-between text-sm mb-2">
-                        <span className="font-bold text-gray-700">{cat}</span>
-                        <span className="text-gray-500 font-medium text-xs">
+                    <div className="flex justify-between text-sm mb-1">
+                        <span className="font-bold text-gray-700 text-xs">{cat}</span>
+                        <span className="text-gray-500 font-medium text-[10px]">
                             <span className={isOver ? 'text-red-500 font-bold' : 'text-black'}>${formatMoney(spent)}</span> <span className="text-gray-300 mx-1">/</span> ${formatMoney(budget as number)}
                         </span>
                     </div>
-                    <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                         <div className={`h-full rounded-full transition-all duration-500 ${isOver ? 'bg-[#FF3B30]' : 'bg-black'}`} style={{ width: `${percent}%` }}></div>
                     </div>
                 </div>
                 );
             })}
-            {Object.values(budgets).every(b => b === 0) && <p className="text-sm text-gray-400 text-center py-2">尚未設定預算</p>}
+            {Object.values(budgets).every(b => b === 0) && <p className="text-xs text-gray-400 text-center py-1">尚未設定預算</p>}
           </div>
         </CardContainer>
-        <CardContainer className="p-6">
-          <h3 className="font-bold text-lg text-black mb-6">支出分類佔比</h3>
+
+        <CardContainer className="px-5 py-4">
+          <div className="mb-2"><h3 className={cardTitleStyle}>支出分類佔比</h3></div>
           {stats.dashboard.pieData.length > 0 ? (
             <>
                 <div className="h-64 -mx-4 mb-4">
                     <ResponsiveContainer width="100%" height="100%">
                     <RePieChart>
-                        {/* [NEW] 點擊圓餅圖區塊跳轉 */}
                         <Pie onClick={(data) => jumpToHistoryCategory(data.name)} data={stats.dashboard.pieData} cx="50%" cy="50%" innerRadius={65} outerRadius={85} paddingAngle={4} dataKey="value" stroke="none" cursor="pointer">
                         {stats.dashboard.pieData.map((entry, index) => ( <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} /> ))}
                         </Pie>
@@ -713,28 +793,27 @@ export default function App() {
                 </div>
                 <div className="space-y-3">
                     {stats.dashboard.pieData.map((entry, index) => (
-                    // [NEW] 點擊分類列表跳轉
                     <div key={entry.name} onClick={() => jumpToHistoryCategory(entry.name)} className="flex items-center justify-between py-1 cursor-pointer active:bg-gray-50 rounded-lg px-1 transition-colors">
                         <div className="flex items-center gap-3">
                             <div className="w-2.5 h-2.5 rounded-full shadow-sm" style={{ backgroundColor: COLORS[index % COLORS.length] }}></div>
-                            <span className="text-sm font-semibold text-gray-600">{entry.name}</span>
+                            <span className="text-xs font-semibold text-gray-600">{entry.name}</span>
                         </div>
                         <div className="text-right flex items-center gap-2">
-                            <span className="text-sm font-bold text-gray-900">${formatMoney(entry.value)}</span>
-                            <span className="text-xs text-gray-400 font-medium w-10 text-right">{stats.dashboard.expense > 0 ? ((entry.value / stats.dashboard.expense) * 100).toFixed(0) : 0}%</span>
+                            <span className="text-sm font-bold text-gray-900 tabular-nums">${formatMoney(entry.value)}</span>
+                            <span className="text-[10px] text-gray-400 font-medium w-8 text-right tabular-nums">{stats.dashboard.expense > 0 ? ((entry.value / stats.dashboard.expense) * 100).toFixed(0) : 0}%</span>
                         </div>
                     </div>
                     ))}
                 </div>
             </>
-          ) : <div className="h-32 flex items-center justify-center text-gray-400 text-sm">尚無支出紀錄</div>}
+          ) : <div className="h-32 flex items-center justify-center text-gray-400 text-xs">尚無支出紀錄</div>}
         </CardContainer>
       </div>
     );
   }
 
   const renderFormView = () => {
-    const { monthlyRemainingInvestable, cumulativeAddOnAvailable, savings } = stats.investment;
+    const { monthlyRemainingInvestable, cumulativeAddOnAvailable, savings, emergencyFund } = stats.investment;
     let effectiveMonthlyLimit = monthlyRemainingInvestable;
     let effectiveCumulativeLimit = cumulativeAddOnAvailable;
 
@@ -746,14 +825,17 @@ export default function App() {
         }
     }
     const currentSavings = savings;
+    const currentEmergency = emergencyFund;
     const isSavingsInsufficient = formData.fromSavings && (Number(formData.amount) > currentSavings);
+    const isEmergencyInsufficient = formData.fromEmergency && (Number(formData.amount) > currentEmergency);
+    
     let isInvestmentInsufficient = false;
     if (formData.type === 'expense' && formData.category === '投資') {
         const amount = Number(formData.amount);
         if (formData.investSource === 'monthly' && amount > effectiveMonthlyLimit) isInvestmentInsufficient = true;
         else if (formData.investSource === 'cumulative' && amount > effectiveCumulativeLimit) isInvestmentInsufficient = true;
     }
-    const isSubmitDisabled = isSavingsInsufficient || isInvestmentInsufficient;
+    const isSubmitDisabled = isSavingsInsufficient || isEmergencyInsufficient || isInvestmentInsufficient;
 
     return (
         <div className="space-y-5 pb-20 pt-2">
@@ -764,7 +846,7 @@ export default function App() {
         <div className="bg-gray-200/60 p-1.5 rounded-xl flex relative">
             <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white rounded-[10px] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${formData.type === 'expense' ? 'left-1.5' : 'left-[calc(50%+1.5px)]'}`}></div>
             <button onClick={() => setFormData({...formData, type: 'expense', category: '飲食', tag: 'need', investSource: 'monthly', isAssetLiquidation: false})} className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'expense' ? 'text-gray-900' : 'text-gray-500'}`}>支出</button>
-            <button onClick={() => setFormData({...formData, type: 'income', category: '收入', tag: 'income', investSource: 'monthly', fromSavings: false})} className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'income' ? 'text-gray-900' : 'text-gray-500'}`}>收入</button>
+            <button onClick={() => setFormData({...formData, type: 'income', category: '收入', tag: 'income', investSource: 'monthly', fromSavings: false, fromEmergency: false})} className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'income' ? 'text-gray-900' : 'text-gray-500'}`}>收入</button>
         </div>
         <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
             <div className="flex items-center justify-between p-5 border-b border-gray-50">
@@ -787,7 +869,8 @@ export default function App() {
                     <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} 
                         className="text-base font-medium text-gray-600 bg-transparent outline-none text-right appearance-none pr-6 relative z-10"
                         style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3e%3c/path%3e%3c/svg%3e")`, backgroundPosition: 'right center', backgroundRepeat: 'no-repeat', backgroundSize: '1em 1em' }}>
-                        {formData.type === 'income' ? <option value="收入">收入</option> : <>{CATEGORIES.filter(c => c !== '收入').map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資</option></>}
+                        {/* [MODIFIED] 使用動態分類 */}
+                        {formData.type === 'income' ? <option value="收入">收入</option> : <>{expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資</option></>}
                     </select>
                 </div>
             </div>
@@ -815,7 +898,8 @@ export default function App() {
                         <button onClick={() => setFormData({...formData, tag: 'need'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.tag === 'need' ? 'bg-gray-100 text-black border-gray-200' : 'bg-white text-gray-400 border-gray-200'}`}>需要 (Need)</button>
                         <button onClick={() => setFormData({...formData, tag: 'want'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.tag === 'want' ? 'bg-[#FDF2F8] text-[#D53F8C] border-[#FBCFE8]' : 'bg-white text-gray-400 border-gray-200'}`}>想要 (Want)</button>
                     </div>
-                    <div onClick={() => setFormData({...formData, fromSavings: !formData.fromSavings, isInstallment: false})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.fromSavings ? 'bg-[#FEEBC8] border-[#FBD38D]' : 'bg-white border-gray-200'}`}>
+                    {/* Savings Option */}
+                    <div onClick={() => setFormData({...formData, fromSavings: !formData.fromSavings, fromEmergency: false, isInstallment: false})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.fromSavings ? 'bg-[#FEEBC8] border-[#FBD38D]' : 'bg-white border-gray-200'}`}>
                         <div className="flex items-center gap-2">
                             <div className={`p-1.5 rounded-full ${formData.fromSavings ? 'bg-[#F6AD55] text-white' : 'bg-gray-100 text-gray-400'}`}><PiggyBank className="w-4 h-4" /></div>
                             <div className="flex flex-col"><span className={`text-sm font-bold ${formData.fromSavings ? 'text-[#975A16]' : 'text-gray-500'}`}>使用現金存款支付</span>{formData.fromSavings && <span className="text-[10px] text-[#C05621] font-medium">餘額: ${formatMoney(currentSavings)}</span>}</div>
@@ -823,6 +907,16 @@ export default function App() {
                         <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${formData.fromSavings ? 'bg-[#975A16] border-[#975A16]' : 'border-gray-300'}`}>{formData.fromSavings && <CheckCircle className="w-3.5 h-3.5 text-white" />}</div>
                     </div>
                     {isSavingsInsufficient && <div className="flex items-center gap-2 px-2 text-[#E53E3E]"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">存款餘額不足</span></div>}
+
+                    {/* Emergency Fund Option */}
+                    <div onClick={() => setFormData({...formData, fromEmergency: !formData.fromEmergency, fromSavings: false, isInstallment: false})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.fromEmergency ? 'bg-red-50 border-red-200' : 'bg-white border-gray-200'}`}>
+                        <div className="flex items-center gap-2">
+                            <div className={`p-1.5 rounded-full ${formData.fromEmergency ? 'bg-[#FF3B30] text-white' : 'bg-gray-100 text-gray-400'}`}><ShieldAlert className="w-4 h-4" /></div>
+                            <div className="flex flex-col"><span className={`text-sm font-bold ${formData.fromEmergency ? 'text-[#C53030]' : 'text-gray-500'}`}>使用緊急預備金支付</span>{formData.fromEmergency && <span className="text-[10px] text-[#C53030] font-medium">餘額: ${formatMoney(currentEmergency)}</span>}</div>
+                        </div>
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${formData.fromEmergency ? 'bg-[#FF3B30] border-[#FF3B30]' : 'border-gray-300'}`}>{formData.fromEmergency && <CheckCircle className="w-3.5 h-3.5 text-white" />}</div>
+                    </div>
+                    {isEmergencyInsufficient && <div className="flex items-center gap-2 px-2 text-[#E53E3E]"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">預備金餘額不足</span></div>}
                 </div>
             ) : (
                 <div className="p-4">
@@ -839,7 +933,7 @@ export default function App() {
         <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 p-5">
             <input type="text" placeholder="新增備註..." value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full text-base bg-transparent outline-none placeholder-gray-400" />
         </div>
-        {formData.type === 'expense' && formData.category !== '投資' && !editingId && !formData.fromSavings && (
+        {formData.type === 'expense' && formData.category !== '投資' && !editingId && !formData.fromSavings && !formData.fromEmergency && (
             <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100 p-5">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3"><div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-black"><CreditCard className="w-5 h-5" /></div><span className="text-base font-bold text-gray-900">分期付款自動生成</span></div>
@@ -884,10 +978,6 @@ export default function App() {
         if (showWantOnly && t.tag !== 'want') return false;
         return true;
     });
-
-    // [NEW] 計算目前視圖中的總支出與想要佔比
-    const visibleExpense = filtered.reduce((acc, t) => (t.type === 'expense' && t.category !== '投資') ? acc + Number(t.amount) : acc, 0);
-    const visibleWant = filtered.reduce((acc, t) => (t.type === 'expense' && t.category !== '投資' && t.tag === 'want') ? acc + Number(t.amount) : acc, 0);
 
     const groupedTransactions = filtered.reduce((groups: { [key: string]: Transaction[] }, t) => {
         const date = new Date(t.date);
@@ -941,7 +1031,7 @@ export default function App() {
                     <div onClick={() => openEditMode(t)} className={`p-4 flex justify-between items-center bg-white relative z-10 transition-transform duration-300 ease-out ${swipedId === t.id ? '-translate-x-24' : 'translate-x-0'} active:bg-gray-50`}>
                         <div className="flex items-center gap-4 overflow-hidden">
                             <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${t.type === 'income' ? 'bg-green-50 text-[#34C759]' : t.category === '投資' ? 'bg-gray-100 text-black' : 'bg-gray-100 text-gray-500'}`}>{t.category === '投資' ? <TrendingUp className="w-5 h-5" /> : <DollarSign className="w-5 h-5" />}</div>
-                            <div className="min-w-0"><div className="flex items-center gap-2"><p className="font-bold text-gray-900 text-base truncate">{t.category}</p>{t.groupId && <span className="bg-gray-100 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-md">分期</span>}{t.fromSavings && <span className="bg-[#FEEBC8] text-[#975A16] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><PiggyBank className="w-2.5 h-2.5" /> 存款</span>}{t.isAssetLiquidation && <span className="bg-[#E6FFFA] text-[#2C7A7B] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><RefreshCcw className="w-2.5 h-2.5" /> 變現</span>}</div><p className="text-xs text-gray-400 truncate mt-0.5">{t.date} • {t.note || '無備註'}</p></div>
+                            <div className="min-w-0"><div className="flex items-center gap-2"><p className="font-bold text-gray-900 text-base truncate">{t.category}</p>{t.groupId && <span className="bg-gray-100 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-md">分期</span>}{t.fromSavings && <span className="bg-[#FEEBC8] text-[#975A16] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><PiggyBank className="w-2.5 h-2.5" /> 存款</span>}{t.fromEmergency && <span className="bg-red-100 text-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><ShieldAlert className="w-2.5 h-2.5" /> 預備金</span>}{t.isAssetLiquidation && <span className="bg-[#E6FFFA] text-[#2C7A7B] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><RefreshCcw className="w-2.5 h-2.5" /> 變現</span>}</div><p className="text-xs text-gray-400 truncate mt-0.5">{t.date} • {t.note || '無備註'}</p></div>
                         </div>
                         <div className="text-right"><p className={`font-bold text-base ${t.type === 'income' ? 'text-[#34C759]' : 'text-black'}`}>{t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}</p>{t.category !== '投資' && t.type === 'expense' && (<span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${t.tag === 'need' ? 'bg-gray-100 text-gray-500' : 'bg-[#FFF5F7] text-[#D53F8C]'}`}>{t.tag === 'need' ? '需要' : '想要'}</span>)}</div>
                     </div>
@@ -986,12 +1076,44 @@ export default function App() {
     return (
         <div className="space-y-6 pt-2">
         <div className="flex items-end justify-between px-1 mb-2"><h2 className="text-3xl font-extrabold text-black tracking-tight">設定</h2></div>
+        
+        {/* [NEW] 分類管理區塊 */}
+        <div>
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">分類管理</h4>
+            <CardContainer className="p-4">
+                <div className="flex flex-wrap gap-2 mb-4">
+                    {expenseCategories.map(cat => (
+                        <div key={cat} className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 rounded-full">
+                            <span className="text-sm font-bold text-gray-700">{cat}</span>
+                            <button onClick={() => handleRemoveCategory(cat)} className="w-4 h-4 rounded-full bg-gray-200 text-gray-500 flex items-center justify-center hover:bg-red-500 hover:text-white transition">
+                                <X className="w-2.5 h-2.5" />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+                <div className="flex gap-2">
+                    <input type="text" placeholder="輸入新分類名稱..." value={newCategoryInput} onChange={e => setNewCategoryInput(e.target.value)} className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 text-sm font-medium outline-none focus:border-black transition" />
+                    <button onClick={handleAddCategory} disabled={!newCategoryInput.trim()} className="bg-black text-white px-4 py-2 rounded-xl font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1">
+                        <Plus className="w-4 h-4" /> 新增
+                    </button>
+                </div>
+            </CardContainer>
+        </div>
+
         <div><h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">緊急預備金</h4><CardContainer className="divide-y divide-gray-50"><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-black">初始金額</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.emergencyCurrent || ''} onChange={e => handleStatChange('emergencyCurrent', e.target.value)} /></div><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-black">目標金額</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.emergencyGoal || ''} onChange={e => handleStatChange('emergencyGoal', e.target.value)} /></div></CardContainer><p className="text-xs text-gray-400 mt-2 ml-2">建議設定為 3~6 個月的生活開銷</p></div>
         <div><h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">初始資產配置</h4><CardContainer className="divide-y divide-gray-50"><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-gray-900">累積可加碼資金</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.available || ''} onChange={e => handleStatChange('available', e.target.value)} /></div><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-gray-900">當月可投資金額</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.initialInvestable || ''} onChange={e => handleStatChange('initialInvestable', e.target.value)} /></div><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-gray-900">現金累積存款</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.savings || ''} onChange={e => handleStatChange('savings', e.target.value)} /></div></CardContainer></div>
-        <div><h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">每月預算設定</h4><CardContainer className="divide-y divide-gray-50">{CATEGORIES.filter(c => c !== '收入' && c !== '投資').map(cat => (<div key={cat} className="p-4 flex items-center justify-between"><label className="text-base font-medium text-gray-900 w-24">{cat}</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="未設定" className="text-base font-medium text-right outline-none text-black flex-1" value={budgets[cat] || ''} onChange={(e) => { if (/^\d*$/.test(e.target.value)) updateBudget(cat, e.target.value); }} /></div>))}</CardContainer></div>
+        <div>
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">每月預算設定</h4>
+            <CardContainer className="divide-y divide-gray-50">
+                {/* [MODIFIED] 使用動態分類來渲染預算設定 */}
+                {expenseCategories.map(cat => (
+                    <div key={cat} className="p-4 flex items-center justify-between"><label className="text-base font-medium text-gray-900 w-24">{cat}</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="未設定" className="text-base font-medium text-right outline-none text-black flex-1" value={budgets[cat] || ''} onChange={(e) => { if (/^\d*$/.test(e.target.value)) updateBudget(cat, e.target.value); }} /></div>
+                ))}
+            </CardContainer>
+        </div>
         <div><h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">資料管理</h4><div onClick={handleExport} className="bg-white rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 flex items-center justify-center gap-2 cursor-pointer active:bg-gray-50 transition-colors"><Download className="w-5 h-5 text-black" /><span className="text-base font-bold text-black">匯出交易紀錄 (Excel/CSV)</span></div></div>
         <div className="pt-6"><h4 className="text-xs font-bold text-red-500 uppercase tracking-wide mb-2 ml-2">危險區域</h4><div onClick={() => setResetModal(true)} className="bg-red-50 rounded-2xl p-4 border border-red-100 flex items-center justify-center gap-2 cursor-pointer active:bg-red-100 transition-colors"><AlertTriangle className="w-5 h-5 text-red-500" /><span className="text-base font-bold text-red-600">初始化 App (清空所有資料)</span></div><p className="text-[10px] text-gray-400 mt-2 text-center">如果儲存空間滿了或發生錯誤，可使用此功能重置。</p></div>
-        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v8.4</p></div>
+        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v8.5</p></div>
         </div>
     );
   };
@@ -1016,7 +1138,6 @@ export default function App() {
           </div>
           <div className="flex-none bg-white/95 backdrop-blur-xl border-t border-gray-200 pb-[calc(env(safe-area-inset-bottom)+5px)] pt-2 px-2 flex justify-around items-center z-30">
             <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'dashboard' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}><PieChart className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">總覽</span></button>
-            {/* [NEW] 點擊明細按鈕時，自動清除篩選條件，回到顯示全部 */}
             <button onClick={() => { setActiveTab('history'); setFilterCategory(null); }} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'history' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}><List className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">明細</span></button>
             <div className="relative -top-6"><button onClick={handleFabClick} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-xl hover:scale-105 transition-transform ${activeTab === 'form' && !editingId ? 'bg-gray-900 rotate-45' : 'bg-black'}`}><Plus className="w-7 h-7" strokeWidth={3} /></button></div>
             <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'investment' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}><TrendingUp className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">投資</span></button>
