@@ -636,9 +636,9 @@ export default function App() {
     const cardContainerStyle = "px-5 py-3.5"; 
 
     // [UI一致性設定] 定義統一的數字樣式
-    // 1. 主要單一數據 (Main Metric): 使用 text-3xl 
-    const mainMetricStyle = "text-3xl font-bold tracking-tight";
-    // 2. 分割數據 (Split Metric - 消費分析): 使用 text-2xl 以免兩欄並排爆版，但視覺上已足夠接近 3xl
+    // [修改] 將原本的 text-3xl 改為 text-2xl，讓所有大數字統一大小
+    const mainMetricStyle = "text-2xl font-bold tracking-tight";
+    // 消費分析原本就是 text-2xl，現在維持不變，與上方統一
     const splitMetricStyle = "text-2xl font-bold tracking-tight";
 
     return (
@@ -651,14 +651,14 @@ export default function App() {
             </select>
         </div>
 
-        {/* 緊急預備金 - 升級為 text-3xl */}
+        {/* 緊急預備金 - 字體改為 text-2xl */}
         <div className="p-5 rounded-[24px] text-white relative overflow-hidden shadow-xl" style={{ backgroundColor: THEME.darkBg }}>
            <div className="relative z-10">
               <div className="flex justify-between items-start mb-4">
                  <div>
                     <h2 className="text-sm font-bold opacity-90 mb-1">緊急預備金</h2>
                     <div className="flex items-baseline gap-2">
-                        {/* 修改：從 text-2xl 改為 text-3xl (mainMetricStyle) */}
+                        {/* 使用 mainMetricStyle (text-2xl) */}
                         <span className={`${mainMetricStyle} text-white`}>${formatMoney(Math.floor(emergencyFund))}</span>
                         {emergencyGoal > 0 ? <span className="text-xs opacity-50 font-medium">/ ${formatMoney(emergencyGoal)}</span> : <button onClick={() => setActiveTab('settings')} className="text-[10px] font-bold text-[#F6AD55] bg-white/10 px-2 py-1 rounded hover:bg-white/20 transition ml-2">請設定目標</button>}
                     </div>
@@ -672,11 +672,11 @@ export default function App() {
            </div>
         </div>
 
-        {/* 淨收支卡片 - 維持 text-3xl */}
+        {/* 淨收支卡片 - 字體改為 text-2xl */}
         <CardContainer className={`${cardContainerStyle} flex justify-between items-center relative overflow-hidden`}>
            <div className="relative z-10">
             <h3 className={cardTitleStyle}>本月淨收支</h3>
-            {/* 保持：已經是 text-3xl (mainMetricStyle) */}
+            {/* 使用 mainMetricStyle (text-2xl) */}
             <p className={`${mainMetricStyle} ${stats.dashboard.netIncome >= 0 ? 'text-gray-900' : 'text-[#F56565]'}`}>
               {stats.dashboard.netIncome >= 0 ? '+' : ''}{formatMoney(stats.dashboard.netIncome)}
             </p>
@@ -693,14 +693,14 @@ export default function App() {
           </div>
         </CardContainer>
 
-        {/* 分期付款卡片 - 升級為 text-3xl */}
+        {/* 分期付款卡片 - 字體改為 text-2xl */}
         <CardContainer className={cardContainerStyle}>
              <div className="flex items-center justify-between mb-3">
                  <h3 className={cardTitleStyle}>分期付款負擔</h3>
                  <span className="text-[10px] font-medium text-gray-400 bg-gray-50 px-2 py-0.5 rounded-md">佔月收入 {installmentRatio.toFixed(1)}%</span>
              </div>
              <div className="flex items-baseline gap-1 mb-2">
-                 {/* 修改：從 text-2xl 改為 text-3xl (mainMetricStyle) */}
+                 {/* 使用 mainMetricStyle (text-2xl) */}
                  <span className={`${mainMetricStyle} text-black`}>${formatMoney(installmentExpense)}</span>
                  <span className="text-xs text-gray-400 font-medium">/ 月</span>
              </div>
@@ -709,7 +709,7 @@ export default function App() {
              </div>
         </CardContainer>
 
-        {/* 消費性質分析 - 升級為 text-2xl (原本是 xl) */}
+        {/* 消費性質分析 - 維持 text-2xl */}
         <CardContainer className={cardContainerStyle}>
            <div className="flex items-center justify-between mb-4">
                <h3 className={cardTitleStyle}>消費性質分析</h3>
@@ -727,7 +727,7 @@ export default function App() {
                      <span className={cardSubLabelStyle}>Need (需要)</span>
                  </div>
                  <div className="flex items-baseline gap-1.5">
-                    {/* 修改：從 text-xl 改為 text-2xl (splitMetricStyle) */}
+                    {/* 使用 splitMetricStyle (text-2xl) */}
                     <span className={`${splitMetricStyle} text-gray-900`}>${formatMoney(stats.dashboard.need)}</span>
                     <span className="text-[10px] font-medium text-gray-400">
                         {stats.dashboard.expense > 0 ? ((stats.dashboard.need / stats.dashboard.expense) * 100).toFixed(0) : 0}%
@@ -741,7 +741,7 @@ export default function App() {
                      <div className="w-1.5 h-1.5 rounded-full bg-[#C59D5F]"></div>
                  </div>
                  <div className="flex items-baseline gap-1.5 justify-end">
-                    {/* 修改：從 text-xl 改為 text-2xl (splitMetricStyle) */}
+                    {/* 使用 splitMetricStyle (text-2xl) */}
                     <span className={`${splitMetricStyle} text-[#C59D5F]`}>${formatMoney(stats.dashboard.want)}</span>
                     <span className="text-[10px] font-medium text-gray-400">
                         {stats.dashboard.expense > 0 ? ((stats.dashboard.want / stats.dashboard.expense) * 100).toFixed(0) : 0}%
@@ -751,7 +751,6 @@ export default function App() {
            </div>
         </CardContainer>
 
-        {/* 預算執行狀況 - 標題樣式保持一致 */}
         <CardContainer className={cardContainerStyle}>
           <div className="flex justify-between items-center mb-4">
               <h3 className={cardTitleStyle}>預算執行狀況</h3>
@@ -815,7 +814,7 @@ export default function App() {
       </div>
     );
   }
-
+  
   const renderFormView = () => {
     const { monthlyRemainingInvestable, cumulativeAddOnAvailable, savings, emergencyFund } = stats.investment;
     let effectiveMonthlyLimit = monthlyRemainingInvestable;
