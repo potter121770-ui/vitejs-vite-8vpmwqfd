@@ -631,14 +631,15 @@ export default function App() {
     const isEmergencyFull = emergencyGoal > 0 && emergencyFund >= emergencyGoal;
     const installmentRatio = income > 0 ? (installmentExpense / income) * 100 : 0;
 
-    // [UI一致性設定] 定義統一的標題樣式
-    // text-[15px] 讓它比內文大，text-gray-900 讓它夠黑夠清楚
     const cardTitleStyle = "text-[15px] font-bold text-gray-900 mb-1"; 
-    
-    // [UI一致性設定] 次級資訊樣式 (用於 Need/Want 或 收入/支出 標籤)
     const cardSubLabelStyle = "text-[11px] font-bold text-gray-400 uppercase tracking-wider";
-    
     const cardContainerStyle = "px-5 py-3.5"; 
+
+    // [UI一致性設定] 定義統一的數字樣式
+    // 1. 主要單一數據 (Main Metric): 使用 text-3xl 
+    const mainMetricStyle = "text-3xl font-bold tracking-tight";
+    // 2. 分割數據 (Split Metric - 消費分析): 使用 text-2xl 以免兩欄並排爆版，但視覺上已足夠接近 3xl
+    const splitMetricStyle = "text-2xl font-bold tracking-tight";
 
     return (
       <div className="space-y-4 pb-4 pt-2">
@@ -650,15 +651,15 @@ export default function App() {
             </select>
         </div>
 
-        {/* 緊急預備金 - 這是 Hero Card，保持深色背景設計，標題微調大小以對齊視覺重量 */}
+        {/* 緊急預備金 - 升級為 text-3xl */}
         <div className="p-5 rounded-[24px] text-white relative overflow-hidden shadow-xl" style={{ backgroundColor: THEME.darkBg }}>
            <div className="relative z-10">
               <div className="flex justify-between items-start mb-4">
                  <div>
-                    {/* 微調：將標題字體稍微加大到 text-sm (14px) 以接近其他卡片的 text-[15px] */}
                     <h2 className="text-sm font-bold opacity-90 mb-1">緊急預備金</h2>
                     <div className="flex items-baseline gap-2">
-                        <span className="text-2xl font-bold tracking-tight text-white">${formatMoney(Math.floor(emergencyFund))}</span>
+                        {/* 修改：從 text-2xl 改為 text-3xl (mainMetricStyle) */}
+                        <span className={`${mainMetricStyle} text-white`}>${formatMoney(Math.floor(emergencyFund))}</span>
                         {emergencyGoal > 0 ? <span className="text-xs opacity-50 font-medium">/ ${formatMoney(emergencyGoal)}</span> : <button onClick={() => setActiveTab('settings')} className="text-[10px] font-bold text-[#F6AD55] bg-white/10 px-2 py-1 rounded hover:bg-white/20 transition ml-2">請設定目標</button>}
                     </div>
                  </div>
@@ -671,15 +672,16 @@ export default function App() {
            </div>
         </div>
 
-        {/* 淨收支卡片 - 【修改重點】標題樣式統一 */}
-        <CardContainer className={`${cardContainerStyle} flex justify-between items-center`}>
-           <div>
+        {/* 淨收支卡片 - 維持 text-3xl */}
+        <CardContainer className={`${cardContainerStyle} flex justify-between items-center relative overflow-hidden`}>
+           <div className="relative z-10">
             <h3 className={cardTitleStyle}>本月淨收支</h3>
-            <p className={`text-3xl font-bold tracking-tight ${stats.dashboard.netIncome >= 0 ? 'text-gray-900' : 'text-[#F56565]'}`}>
+            {/* 保持：已經是 text-3xl (mainMetricStyle) */}
+            <p className={`${mainMetricStyle} ${stats.dashboard.netIncome >= 0 ? 'text-gray-900' : 'text-[#F56565]'}`}>
               {stats.dashboard.netIncome >= 0 ? '+' : ''}{formatMoney(stats.dashboard.netIncome)}
             </p>
           </div>
-          <div className="text-right space-y-1">
+          <div className="text-right space-y-1 relative z-10">
              <div className="flex items-center gap-2 justify-end">
                 <span className={cardSubLabelStyle}>收入</span>
                 <span className="text-sm font-bold tabular-nums" style={{ color: THEME.success }}>+${formatMoney(stats.dashboard.income)}</span>
@@ -691,14 +693,15 @@ export default function App() {
           </div>
         </CardContainer>
 
-        {/* 分期付款卡片 - 標題樣式已統一 */}
+        {/* 分期付款卡片 - 升級為 text-3xl */}
         <CardContainer className={cardContainerStyle}>
              <div className="flex items-center justify-between mb-3">
                  <h3 className={cardTitleStyle}>分期付款負擔</h3>
                  <span className="text-[10px] font-medium text-gray-400 bg-gray-50 px-2 py-0.5 rounded-md">佔月收入 {installmentRatio.toFixed(1)}%</span>
              </div>
              <div className="flex items-baseline gap-1 mb-2">
-                 <span className="text-2xl font-bold text-black tracking-tight">${formatMoney(installmentExpense)}</span>
+                 {/* 修改：從 text-2xl 改為 text-3xl (mainMetricStyle) */}
+                 <span className={`${mainMetricStyle} text-black`}>${formatMoney(installmentExpense)}</span>
                  <span className="text-xs text-gray-400 font-medium">/ 月</span>
              </div>
              <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
@@ -706,7 +709,7 @@ export default function App() {
              </div>
         </CardContainer>
 
-        {/* 消費性質分析 - 標題樣式已統一 */}
+        {/* 消費性質分析 - 升級為 text-2xl (原本是 xl) */}
         <CardContainer className={cardContainerStyle}>
            <div className="flex items-center justify-between mb-4">
                <h3 className={cardTitleStyle}>消費性質分析</h3>
@@ -721,11 +724,11 @@ export default function App() {
               <div className="flex flex-col gap-0.5">
                  <div className="flex items-center gap-1.5">
                      <div className="w-1.5 h-1.5 rounded-full bg-black"></div>
-                     {/* 這裡保持 SubLabel 樣式，因為它是圖表說明 */}
                      <span className={cardSubLabelStyle}>Need (需要)</span>
                  </div>
                  <div className="flex items-baseline gap-1.5">
-                    <span className="text-xl font-bold text-gray-900">${formatMoney(stats.dashboard.need)}</span>
+                    {/* 修改：從 text-xl 改為 text-2xl (splitMetricStyle) */}
+                    <span className={`${splitMetricStyle} text-gray-900`}>${formatMoney(stats.dashboard.need)}</span>
                     <span className="text-[10px] font-medium text-gray-400">
                         {stats.dashboard.expense > 0 ? ((stats.dashboard.need / stats.dashboard.expense) * 100).toFixed(0) : 0}%
                     </span>
@@ -738,7 +741,8 @@ export default function App() {
                      <div className="w-1.5 h-1.5 rounded-full bg-[#C59D5F]"></div>
                  </div>
                  <div className="flex items-baseline gap-1.5 justify-end">
-                    <span className="text-xl font-bold text-[#C59D5F]">${formatMoney(stats.dashboard.want)}</span>
+                    {/* 修改：從 text-xl 改為 text-2xl (splitMetricStyle) */}
+                    <span className={`${splitMetricStyle} text-[#C59D5F]`}>${formatMoney(stats.dashboard.want)}</span>
                     <span className="text-[10px] font-medium text-gray-400">
                         {stats.dashboard.expense > 0 ? ((stats.dashboard.want / stats.dashboard.expense) * 100).toFixed(0) : 0}%
                     </span>
@@ -747,7 +751,7 @@ export default function App() {
            </div>
         </CardContainer>
 
-        {/* 預算執行狀況 - 標題樣式已統一 */}
+        {/* 預算執行狀況 - 標題樣式保持一致 */}
         <CardContainer className={cardContainerStyle}>
           <div className="flex justify-between items-center mb-4">
               <h3 className={cardTitleStyle}>預算執行狀況</h3>
