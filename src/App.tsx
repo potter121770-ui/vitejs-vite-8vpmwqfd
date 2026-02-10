@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart, ShieldAlert, Tag } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart, ShieldAlert, Tag, ShoppingBag, Briefcase, Database } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
 } from 'recharts';
@@ -33,9 +33,9 @@ interface StatsData {
 }
 
 interface MonthlyData {
-  income: number;           
+  income: number;            
   assetLiquidation: number; 
-  expense: number;         
+  expense: number;          
   installmentExpense: number; 
   savingsExpense: number;  
   emergencyExpense: number;
@@ -64,18 +64,18 @@ interface ProcessedMonthData extends MonthlyData {
 
 // --- 色彩配置 (Critical Wealth Theme) ---
 const THEME = {
-  darkBg: '#1C1C1E',       
-  darkCard: '#2C2C2E',     
-  accentGold: '#C59D5F',   
+  darkBg: '#1C1C1E',        
+  darkCard: '#2C2C2E',      
+  accentGold: '#C59D5F',    
   textPrimary: '#000000', 
-  creamBg: '#F9F5F0',      
-  bgGray: '#F2F2F7',       
-  danger: '#FF3B30',       
-  success: '#34C759',      
-  textBlue: '#5AC8FA',     
-  textGreen: '#30D158',    
-  textYellow: '#FFD60A',   
-  textBrown: '#8B5E3C',    
+  creamBg: '#F9F5F0',       
+  bgGray: '#F2F2F7',        
+  danger: '#FF3B30',        
+  success: '#34C759',       
+  textBlue: '#5AC8FA',      
+  textGreen: '#30D158',     
+  textYellow: '#FFD60A',    
+  textBrown: '#8B5E3C',     
 };
 
 // --- 初始資料 ---
@@ -126,7 +126,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [hideFuture, setHideFuture] = useState(true);
   const [filterCategory, setFilterCategory] = useState<string | null>(null);
-  const [showWantOnly, setShowWantOnly] = useState(false);
+  const [filterTag, setFilterTag] = useState<'need' | 'want' | null>(null);
     
   // --- iOS App-Like Behavior Hook ---
   useEffect(() => {
@@ -175,11 +175,28 @@ export default function App() {
     } catch (e) { return INITIAL_BUDGETS; }
   });
 
+  // [NEW] Storage Usage State
+  const [storageUsage, setStorageUsage] = useState(0);
+
   useEffect(() => { localStorage.setItem('yupao_transactions_v2', JSON.stringify(transactions)); }, [transactions]);
   useEffect(() => { localStorage.setItem('yupao_stats_v2', JSON.stringify(initialStats)); }, [initialStats]);
   useEffect(() => { localStorage.setItem('yupao_budgets_v2', JSON.stringify(budgets)); }, [budgets]);
-  // [NEW] 儲存分類
   useEffect(() => { localStorage.setItem('yupao_categories_v2', JSON.stringify(expenseCategories)); }, [expenseCategories]);
+
+  // [NEW] Calculate Storage Usage on any data change
+  useEffect(() => {
+    const calculateStorage = () => {
+        let total = 0;
+        for (let key in localStorage) {
+            if (localStorage.hasOwnProperty(key)) {
+                // UTF-16 characters are 2 bytes each
+                total += ((localStorage[key].length + key.length) * 2);
+            }
+        }
+        setStorageUsage(total);
+    };
+    calculateStorage();
+  }, [transactions, budgets, initialStats, expenseCategories]);
 
   const [deleteModal, setDeleteModal] = useState<{ show: boolean; id: number | null }>({ show: false, id: null });
   const [resetModal, setResetModal] = useState(false);
@@ -189,7 +206,6 @@ export default function App() {
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // [NEW] 新增分類的輸入狀態
   const [newCategoryInput, setNewCategoryInput] = useState('');
 
   const availableMonths = useMemo(() => {
@@ -205,9 +221,15 @@ export default function App() {
   }, [availableMonths, selectedMonth]);
 
   // Form State
+  // [MODIFIED] Helper to determine default category
+  const getDefaultCategory = () => {
+      if (expenseCategories.includes('飲食')) return '飲食';
+      return expenseCategories[0] || '一般';
+  };
+
   const [formData, setFormData] = useState({
     date: getLocalDayString(),
-    category: expenseCategories[0] || '飲食', // [MODIFIED] 使用動態分類的第一個
+    category: getDefaultCategory(), // [MODIFIED] Use helper
     amount: '',
     note: '',
     tag: 'need' as 'need' | 'want' | 'income', 
@@ -278,7 +300,7 @@ export default function App() {
       localStorage.removeItem('yupao_transactions_v2');
       localStorage.removeItem('yupao_stats_v2');
       localStorage.removeItem('yupao_budgets_v2');
-      localStorage.removeItem('yupao_categories_v2'); // [NEW] Reset categories
+      localStorage.removeItem('yupao_categories_v2'); 
       window.location.reload();
   };
 
@@ -293,12 +315,12 @@ export default function App() {
         newValue = currentValue.length > 0 ? currentValue.slice(0, -1) : '';
     } else if (key === '%') {
         try {
-             if (currentValue) {
+            if (currentValue) {
                 const cleanValue = currentValue.replace(/[^0-9+\-*/.]/g, '');
                 // eslint-disable-next-line no-new-func
                 const result = new Function('return ' + cleanValue)();
                 newValue = String(Math.round(Number(result) * 100) / 10000);
-             }
+            }
         } catch(e) { newValue = currentValue; }
     } else if (key === '=') {
         try {
@@ -355,9 +377,9 @@ export default function App() {
         if (t.isAssetLiquidation) monthlyRawData[monthKey].assetLiquidation += amount;
         else monthlyRawData[monthKey].income += amount;
       } else if (t.category === '投資') {
-         monthlyRawData[monthKey].actualInvested += amount;
-         if (t.investSource === 'cumulative') monthlyRawData[monthKey].investedFromCumulative += amount;
-         else monthlyRawData[monthKey].investedFromMonthly += amount;
+        monthlyRawData[monthKey].actualInvested += amount;
+        if (t.investSource === 'cumulative') monthlyRawData[monthKey].investedFromCumulative += amount;
+        else monthlyRawData[monthKey].investedFromMonthly += amount;
       } else {
         if (t.fromSavings) monthlyRawData[monthKey].savingsExpense += amount;
         else if (t.fromEmergency) monthlyRawData[monthKey].emergencyExpense += amount;
@@ -473,7 +495,9 @@ export default function App() {
   const openAddMode = () => {
     setEditingId(null);
     setFormData({ 
-      date: getLocalDayString(), category: expenseCategories[0] || '飲食', amount: '', note: '', tag: 'need', type: 'expense',
+      date: getLocalDayString(), 
+      category: getDefaultCategory(), // [MODIFIED] Prioritize '飲食'
+      amount: '', note: '', tag: 'need', type: 'expense',
       isInstallment: false, installmentCount: '3', installmentCalcType: 'total', perMonthInput: '',
       investSource: 'monthly', fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
     });
@@ -503,18 +527,15 @@ export default function App() {
     else openAddMode();
   };
 
-  // [NEW] 新增分類邏輯
   const handleAddCategory = () => {
       if (!newCategoryInput.trim()) return;
-      if (expenseCategories.includes(newCategoryInput.trim())) return; // 避免重複
+      if (expenseCategories.includes(newCategoryInput.trim())) return; 
       setExpenseCategories([...expenseCategories, newCategoryInput.trim()]);
       setNewCategoryInput('');
   };
 
-  // [NEW] 移除分類邏輯
   const handleRemoveCategory = (catToRemove: string) => {
       setExpenseCategories(expenseCategories.filter(c => c !== catToRemove));
-      // 同步移除該分類的預算設定，避免成為殭屍設定
       if (budgets[catToRemove]) {
           const newBudgets = { ...budgets };
           delete newBudgets[catToRemove];
@@ -595,15 +616,15 @@ export default function App() {
        const [y, m, d] = formData.date.split('-').map(Number);
        const startDay = d;
        const groupId = `group_${baseId}_${Date.now()}`; 
-       
+        
        for (let i = 0; i < count; i++) {
           const currentAmount = i === 0 ? perMonthAmount + remainder : perMonthAmount; 
           const nextDate = new Date(y, m - 1 + i, d);
           if (nextDate.getDate() !== startDay) nextDate.setDate(0); 
           
           newTransactions.push({
-             id: baseId + i, ...formData, date: formatDateToLocal(nextDate), amount: currentAmount,
-             note: `${formData.note} (${i + 1}/${count})`, groupId: groupId, tag: finalTag, fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
+            id: baseId + i, ...formData, date: formatDateToLocal(nextDate), amount: currentAmount,
+            note: `${formData.note} (${i + 1}/${count})`, groupId: groupId, tag: finalTag, fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
           });
        }
        setTransactions([...newTransactions, ...transactions]);
@@ -634,11 +655,7 @@ export default function App() {
     const cardTitleStyle = "text-[15px] font-bold text-gray-900 mb-1"; 
     const cardSubLabelStyle = "text-[11px] font-bold text-gray-400 uppercase tracking-wider";
     const cardContainerStyle = "px-5 py-3.5"; 
-
-    // [UI一致性設定] 定義統一的數字樣式
-    // [修改] 將原本的 text-3xl 改為 text-2xl，讓所有大數字統一大小
     const mainMetricStyle = "text-2xl font-bold tracking-tight";
-    // 消費分析原本就是 text-2xl，現在維持不變，與上方統一
     const splitMetricStyle = "text-2xl font-bold tracking-tight";
 
     return (
@@ -651,14 +668,12 @@ export default function App() {
             </select>
         </div>
 
-        {/* 緊急預備金 - 字體改為 text-2xl */}
         <div className="p-5 rounded-[24px] text-white relative overflow-hidden shadow-xl" style={{ backgroundColor: THEME.darkBg }}>
            <div className="relative z-10">
               <div className="flex justify-between items-start mb-4">
                  <div>
                     <h2 className="text-sm font-bold opacity-90 mb-1">緊急預備金</h2>
                     <div className="flex items-baseline gap-2">
-                        {/* 使用 mainMetricStyle (text-2xl) */}
                         <span className={`${mainMetricStyle} text-white`}>${formatMoney(Math.floor(emergencyFund))}</span>
                         {emergencyGoal > 0 ? <span className="text-xs opacity-50 font-medium">/ ${formatMoney(emergencyGoal)}</span> : <button onClick={() => setActiveTab('settings')} className="text-[10px] font-bold text-[#F6AD55] bg-white/10 px-2 py-1 rounded hover:bg-white/20 transition ml-2">請設定目標</button>}
                     </div>
@@ -672,11 +687,9 @@ export default function App() {
            </div>
         </div>
 
-        {/* 淨收支卡片 - 字體改為 text-2xl */}
         <CardContainer className={`${cardContainerStyle} flex justify-between items-center relative overflow-hidden`}>
            <div className="relative z-10">
             <h3 className={cardTitleStyle}>本月淨收支</h3>
-            {/* 使用 mainMetricStyle (text-2xl) */}
             <p className={`${mainMetricStyle} ${stats.dashboard.netIncome >= 0 ? 'text-gray-900' : 'text-[#F56565]'}`}>
               {stats.dashboard.netIncome >= 0 ? '+' : ''}{formatMoney(stats.dashboard.netIncome)}
             </p>
@@ -693,41 +706,40 @@ export default function App() {
           </div>
         </CardContainer>
 
-        {/* 分期付款卡片 - 字體改為 text-2xl */}
         <CardContainer className={cardContainerStyle}>
-             <div className="flex items-center justify-between mb-3">
-                 <h3 className={cardTitleStyle}>分期付款負擔</h3>
-                 <span className="text-[10px] font-medium text-gray-400 bg-gray-50 px-2 py-0.5 rounded-md">佔月收入 {installmentRatio.toFixed(1)}%</span>
-             </div>
-             <div className="flex items-baseline gap-1 mb-2">
-                 {/* 使用 mainMetricStyle (text-2xl) */}
-                 <span className={`${mainMetricStyle} text-black`}>${formatMoney(installmentExpense)}</span>
-                 <span className="text-xs text-gray-400 font-medium">/ 月</span>
-             </div>
-             <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                 <div className="h-full rounded-full transition-all duration-1000 bg-black" style={{ width: `${Math.min(installmentRatio, 100)}%` }}></div>
-             </div>
+           <div className="flex items-center justify-between mb-3">
+              <h3 className={cardTitleStyle}>分期付款負擔</h3>
+              <span className="text-[10px] font-medium text-gray-400 bg-gray-50 px-2 py-0.5 rounded-md">佔月收入 {installmentRatio.toFixed(1)}%</span>
+           </div>
+           <div className="flex items-baseline gap-1 mb-2">
+              <span className={`${mainMetricStyle} text-black`}>${formatMoney(installmentExpense)}</span>
+              <span className="text-xs text-gray-400 font-medium">/ 月</span>
+           </div>
+           <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+              <div className="h-full rounded-full transition-all duration-1000 bg-black" style={{ width: `${Math.min(installmentRatio, 100)}%` }}></div>
+           </div>
         </CardContainer>
 
-        {/* 消費性質分析 - 維持 text-2xl */}
         <CardContainer className={cardContainerStyle}>
            <div className="flex items-center justify-between mb-4">
-               <h3 className={cardTitleStyle}>消費性質分析</h3>
+              <h3 className={cardTitleStyle}>消費性質分析</h3>
            </div>
-           
+            
            <div className="flex h-2.5 w-full rounded-full overflow-hidden bg-gray-100 mb-4">
              <div className="h-full bg-black transition-all duration-1000 ease-out" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.need / stats.dashboard.expense * 100) : 0}%` }}></div>
              <div className="h-full bg-[#C59D5F] transition-all duration-1000 ease-out" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.want / stats.dashboard.expense * 100) : 0}%` }}></div>
            </div>
 
            <div className="flex justify-between items-end">
-              <div className="flex flex-col gap-0.5">
+              <div 
+                className="flex flex-col gap-0.5 cursor-pointer active:opacity-70 transition-opacity"
+                onClick={() => { setFilterTag('need'); setActiveTab('history'); }}
+              >
                  <div className="flex items-center gap-1.5">
-                     <div className="w-1.5 h-1.5 rounded-full bg-black"></div>
-                     <span className={cardSubLabelStyle}>Need (需要)</span>
+                    <div className="w-1.5 h-1.5 rounded-full bg-black"></div>
+                    <span className={cardSubLabelStyle}>Need (需要)</span>
                  </div>
                  <div className="flex items-baseline gap-1.5">
-                    {/* 使用 splitMetricStyle (text-2xl) */}
                     <span className={`${splitMetricStyle} text-gray-900`}>${formatMoney(stats.dashboard.need)}</span>
                     <span className="text-[10px] font-medium text-gray-400">
                         {stats.dashboard.expense > 0 ? ((stats.dashboard.need / stats.dashboard.expense) * 100).toFixed(0) : 0}%
@@ -735,13 +747,15 @@ export default function App() {
                  </div>
               </div>
 
-              <div className="flex flex-col gap-0.5 items-end">
+              <div 
+                className="flex flex-col gap-0.5 items-end cursor-pointer active:opacity-70 transition-opacity"
+                onClick={() => { setFilterTag('want'); setActiveTab('history'); }}
+              >
                  <div className="flex items-center gap-1.5">
-                     <span className={cardSubLabelStyle}>Want (想要)</span>
-                     <div className="w-1.5 h-1.5 rounded-full bg-[#C59D5F]"></div>
+                    <span className={cardSubLabelStyle}>Want (想要)</span>
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#C59D5F]"></div>
                  </div>
                  <div className="flex items-baseline gap-1.5 justify-end">
-                    {/* 使用 splitMetricStyle (text-2xl) */}
                     <span className={`${splitMetricStyle} text-[#C59D5F]`}>${formatMoney(stats.dashboard.want)}</span>
                     <span className="text-[10px] font-medium text-gray-400">
                         {stats.dashboard.expense > 0 ? ((stats.dashboard.want / stats.dashboard.expense) * 100).toFixed(0) : 0}%
@@ -872,7 +886,6 @@ export default function App() {
                     <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} 
                         className="text-base font-medium text-gray-600 bg-transparent outline-none text-right appearance-none pr-6 relative z-10"
                         style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3e%3c/path%3e%3c/svg%3e")`, backgroundPosition: 'right center', backgroundRepeat: 'no-repeat', backgroundSize: '1em 1em' }}>
-                        {/* [MODIFIED] 使用動態分類 */}
                         {formData.type === 'income' ? <option value="收入">收入</option> : <>{expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資</option></>}
                     </select>
                 </div>
@@ -926,7 +939,7 @@ export default function App() {
                     <div onClick={() => setFormData({...formData, isAssetLiquidation: !formData.isAssetLiquidation})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.isAssetLiquidation ? 'bg-[#E6FFFA] border-[#81E6D9]' : 'bg-white border-gray-200'}`}>
                         <div className="flex items-center gap-2">
                             <div className={`p-1.5 rounded-full ${formData.isAssetLiquidation ? 'bg-[#38B2AC] text-white' : 'bg-gray-100 text-gray-400'}`}><RefreshCcw className="w-4 h-4" /></div>
-                            <div className="flex flex-col"><span className={`text-sm font-bold ${formData.isAssetLiquidation ? 'text-[#2C7A7B]' : 'text-gray-500'}`}>資產變現 / 退款</span><span className="text-[10px] text-gray-400">存入現金存款，不計入投資額度</span></div>
+                            <div className="flex flex-col"><span className={`text-sm font-bold ${formData.isAssetLiquidation ? 'text-[#2C7A7B]' : 'text-gray-500'}`}>資產調整 / 變現</span><span className="text-[10px] text-gray-400">存入現金存款，不計入投資額度</span></div>
                         </div>
                         <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${formData.isAssetLiquidation ? 'bg-[#38B2AC] border-[#38B2AC]' : 'border-gray-300'}`}>{formData.isAssetLiquidation && <CheckCircle className="w-3.5 h-3.5 text-white" />}</div>
                     </div>
@@ -973,12 +986,10 @@ export default function App() {
   const renderHistoryView = () => {
     const sorted = transactions.sort((a,b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     const today = getLocalDayString(); 
-    // [NEW] 支援分類篩選與想要篩選
     const filtered = sorted.filter(t => {
         if (hideFuture && t.date > today) return false;
         if (filterCategory && t.category !== filterCategory) return false;
-        // [NEW] 如果開啟「只看想要」，過濾掉 tag 不是 want 的項目
-        if (showWantOnly && t.tag !== 'want') return false;
+        if (filterTag && t.tag !== filterTag) return false;
         return true;
     });
 
@@ -1001,26 +1012,37 @@ export default function App() {
             <h2 className="text-3xl font-extrabold text-black tracking-tight">歷史紀錄</h2>
             <p className="text-xs font-semibold text-gray-400 mt-1">{filtered.length} 筆紀錄 {hideFuture && '(已隱藏未到期)'}</p>
           </div>
-          {/* [NEW] 「只看想要」切換按鈕 */}
           <div className="flex gap-2">
-            <button onClick={() => setShowWantOnly(!showWantOnly)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${showWantOnly ? 'bg-[#D53F8C] text-white border-[#D53F8C]' : 'bg-white text-[#D53F8C] border-gray-200 hover:bg-[#FFF5F7]'}`}>
-                {showWantOnly ? <Heart className="w-3.5 h-3.5 fill-current" /> : <Heart className="w-3.5 h-3.5" />}
-                {showWantOnly ? '只看想要' : '篩選想要'}
+            <button onClick={() => setFilterTag(filterTag === 'want' ? null : 'want')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${filterTag === 'want' ? 'bg-[#D53F8C] text-white border-[#D53F8C]' : 'bg-white text-[#D53F8C] border-gray-200 hover:bg-[#FFF5F7]'}`}>
+                {filterTag === 'want' ? <Heart className="w-3.5 h-3.5 fill-current" /> : <Heart className="w-3.5 h-3.5" />}
+                Want
             </button>
-            <button onClick={() => setHideFuture(!hideFuture)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${!hideFuture ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200'}`}>
-                {!hideFuture ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}{!hideFuture ? '隱藏未到期' : '全部'}
+            <button onClick={() => setFilterTag(filterTag === 'need' ? null : 'need')} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold transition border ${filterTag === 'need' ? 'bg-black text-white border-black' : 'bg-white text-black border-gray-200 hover:bg-gray-50'}`}>
+                {filterTag === 'need' ? <ShoppingBag className="w-3.5 h-3.5 fill-current" /> : <ShoppingBag className="w-3.5 h-3.5" />}
+                Need
+            </button>
+            <button onClick={() => setHideFuture(!hideFuture)} className={`w-8 h-8 rounded-full flex items-center justify-center border transition ${!hideFuture ? 'bg-gray-800 text-white border-gray-800' : 'bg-white text-gray-400 border-gray-200'}`}>
+                {!hideFuture ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
         </div>
         
-        {/* [NEW] 顯示目前篩選狀態 */}
-        {filterCategory && (
-            <div className="bg-black/5 rounded-xl p-3 flex items-center justify-between border border-black/5 animate-fade-in">
-                <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-black text-white flex items-center justify-center"><Filter className="w-4 h-4" /></div>
-                    <div><p className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">正在篩選分類</p><p className="text-sm font-bold text-black">{filterCategory}</p></div>
-                </div>
-                <button onClick={() => setFilterCategory(null)} className="p-2 rounded-full bg-white shadow-sm border border-gray-200 text-gray-500 hover:text-black hover:bg-gray-50 transition"><X className="w-4 h-4" /></button>
+        {(filterCategory || filterTag) && (
+            <div className="flex flex-wrap gap-2">
+                {filterCategory && (
+                    <div className="bg-black/5 rounded-xl p-2 pl-3 flex items-center gap-2 border border-black/5 animate-fade-in">
+                        <span className="text-xs font-bold text-gray-500">分類:</span>
+                        <span className="text-sm font-bold text-black">{filterCategory}</span>
+                        <button onClick={() => setFilterCategory(null)} className="w-5 h-5 rounded-full bg-white text-gray-400 flex items-center justify-center hover:text-black"><X className="w-3 h-3" /></button>
+                    </div>
+                )}
+                {filterTag && (
+                    <div className={`rounded-xl p-2 pl-3 flex items-center gap-2 border animate-fade-in ${filterTag === 'want' ? 'bg-[#FFF5F7] border-[#FBCFE8]' : 'bg-gray-100 border-gray-200'}`}>
+                        <span className={`text-xs font-bold ${filterTag === 'want' ? 'text-[#D53F8C]' : 'text-gray-500'}`}>標籤:</span>
+                        <span className={`text-sm font-bold ${filterTag === 'want' ? 'text-[#D53F8C]' : 'text-black'}`}>{filterTag === 'want' ? '想要 (Want)' : '需要 (Need)'}</span>
+                        <button onClick={() => setFilterTag(null)} className="w-5 h-5 rounded-full bg-white/50 text-gray-500 flex items-center justify-center hover:text-black"><X className="w-3 h-3" /></button>
+                    </div>
+                )}
             </div>
         )}
 
@@ -1076,6 +1098,12 @@ export default function App() {
 
   const renderSettingsView = () => {
     const handleStatChange = (field: keyof StatsData, value: string) => { if (/^\d*$/.test(value)) setInitialStats(prev => ({...prev, [field]: value === '' ? 0 : Number(value)})); };
+    
+    // Storage Calculation for UI
+    const limit = 5 * 1024 * 1024; // 5MB approx limit
+    const usagePercent = Math.min((storageUsage / limit) * 100, 100);
+    const usageColor = usagePercent > 90 ? 'bg-red-500' : usagePercent > 70 ? 'bg-orange-500' : 'bg-[#34C759]';
+
     return (
         <div className="space-y-6 pt-2">
         <div className="flex items-end justify-between px-1 mb-2"><h2 className="text-3xl font-extrabold text-black tracking-tight">設定</h2></div>
@@ -1108,15 +1136,35 @@ export default function App() {
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">每月預算設定</h4>
             <CardContainer className="divide-y divide-gray-50">
-                {/* [MODIFIED] 使用動態分類來渲染預算設定 */}
                 {expenseCategories.map(cat => (
                     <div key={cat} className="p-4 flex items-center justify-between"><label className="text-base font-medium text-gray-900 w-24">{cat}</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="未設定" className="text-base font-medium text-right outline-none text-black flex-1" value={budgets[cat] || ''} onChange={(e) => { if (/^\d*$/.test(e.target.value)) updateBudget(cat, e.target.value); }} /></div>
                 ))}
             </CardContainer>
         </div>
-        <div><h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">資料管理</h4><div onClick={handleExport} className="bg-white rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 flex items-center justify-center gap-2 cursor-pointer active:bg-gray-50 transition-colors"><Download className="w-5 h-5 text-black" /><span className="text-base font-bold text-black">匯出交易紀錄 (Excel/CSV)</span></div></div>
+        
+        {/* [NEW] 資料管理區塊 (含儲存空間顯示) */}
+        <div>
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">資料管理</h4>
+            
+            <CardContainer className="p-4 mb-2">
+                 <div className="flex items-center justify-between mb-2">
+                     <div className="flex items-center gap-2 text-gray-900">
+                        <Database className="w-4 h-4" />
+                        <span className="text-sm font-bold">儲存空間</span>
+                     </div>
+                     <span className="text-xs font-medium text-gray-500">{(storageUsage / 1024).toFixed(1)} KB / ~5 MB</span>
+                 </div>
+                 <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                     <div className={`h-full rounded-full transition-all duration-500 ${usageColor}`} style={{ width: `${usagePercent}%` }}></div>
+                 </div>
+                 <p className="text-[10px] text-gray-400 mt-2 text-right">瀏覽器限制約 5MB，請定期備份以免資料遺失。</p>
+            </CardContainer>
+
+            <div onClick={handleExport} className="bg-white rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 flex items-center justify-center gap-2 cursor-pointer active:bg-gray-50 transition-colors"><Download className="w-5 h-5 text-black" /><span className="text-base font-bold text-black">匯出交易紀錄 (Excel/CSV)</span></div>
+        </div>
+
         <div className="pt-6"><h4 className="text-xs font-bold text-red-500 uppercase tracking-wide mb-2 ml-2">危險區域</h4><div onClick={() => setResetModal(true)} className="bg-red-50 rounded-2xl p-4 border border-red-100 flex items-center justify-center gap-2 cursor-pointer active:bg-red-100 transition-colors"><AlertTriangle className="w-5 h-5 text-red-500" /><span className="text-base font-bold text-red-600">初始化 App (清空所有資料)</span></div><p className="text-[10px] text-gray-400 mt-2 text-center">如果儲存空間滿了或發生錯誤，可使用此功能重置。</p></div>
-        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v8.5</p></div>
+        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v8.6</p></div>
         </div>
     );
   };
