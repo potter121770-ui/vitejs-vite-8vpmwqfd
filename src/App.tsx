@@ -564,7 +564,7 @@ export default function App() {
           const updatedTransactions = transactions.map(t => {
               if (t.groupId === originalTrans.groupId) {
                   let newDate = t.date;
-                  
+                
                   if (t.date !== formData.date && t.id === editingId) {
                         newDate = formData.date;
                   } else if (t.date !== formData.date) { 
@@ -616,12 +616,12 @@ export default function App() {
        const [y, m, d] = formData.date.split('-').map(Number);
        const startDay = d;
        const groupId = `group_${baseId}_${Date.now()}`; 
-        
+         
        for (let i = 0; i < count; i++) {
           const currentAmount = i === 0 ? perMonthAmount + remainder : perMonthAmount; 
           const nextDate = new Date(y, m - 1 + i, d);
           if (nextDate.getDate() !== startDay) nextDate.setDate(0); 
-          
+         
           newTransactions.push({
             id: baseId + i, ...formData, date: formatDateToLocal(nextDate), amount: currentAmount,
             note: `${formData.note} (${i + 1}/${count})`, groupId: groupId, tag: finalTag, fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
@@ -724,15 +724,16 @@ export default function App() {
            <div className="flex items-center justify-between mb-4">
               <h3 className={cardTitleStyle}>消費性質分析</h3>
            </div>
-            
+           
            <div className="flex h-2.5 w-full rounded-full overflow-hidden bg-gray-100 mb-4">
              <div className="h-full bg-black transition-all duration-1000 ease-out" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.need / stats.dashboard.expense * 100) : 0}%` }}></div>
              <div className="h-full bg-[#C59D5F] transition-all duration-1000 ease-out" style={{ width: `${stats.dashboard.expense > 0 ? (stats.dashboard.want / stats.dashboard.expense * 100) : 0}%` }}></div>
            </div>
 
-           <div className="flex justify-between items-end">
-              <div 
-                className="flex flex-col gap-0.5 cursor-pointer active:opacity-70 transition-opacity"
+           <div className="flex justify-between items-end gap-2">
+              <button 
+                type="button"
+                className="flex flex-col gap-0.5 cursor-pointer active:opacity-70 transition-opacity flex-1 text-left"
                 onClick={() => { setFilterTag('need'); setActiveTab('history'); }}
               >
                  <div className="flex items-center gap-1.5">
@@ -745,10 +746,11 @@ export default function App() {
                         {stats.dashboard.expense > 0 ? ((stats.dashboard.need / stats.dashboard.expense) * 100).toFixed(0) : 0}%
                     </span>
                  </div>
-              </div>
+              </button>
 
-              <div 
-                className="flex flex-col gap-0.5 items-end cursor-pointer active:opacity-70 transition-opacity"
+              <button 
+                type="button"
+                className="flex flex-col gap-0.5 items-end cursor-pointer active:opacity-70 transition-opacity flex-1 text-right"
                 onClick={() => { setFilterTag('want'); setActiveTab('history'); }}
               >
                  <div className="flex items-center gap-1.5">
@@ -761,7 +763,7 @@ export default function App() {
                         {stats.dashboard.expense > 0 ? ((stats.dashboard.want / stats.dashboard.expense) * 100).toFixed(0) : 0}%
                     </span>
                  </div>
-              </div>
+              </button>
            </div>
         </CardContainer>
 
@@ -1147,17 +1149,17 @@ export default function App() {
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">資料管理</h4>
             
             <CardContainer className="p-4 mb-2">
-                 <div className="flex items-center justify-between mb-2">
-                     <div className="flex items-center gap-2 text-gray-900">
+                <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2 text-gray-900">
                         <Database className="w-4 h-4" />
                         <span className="text-sm font-bold">儲存空間</span>
-                     </div>
-                     <span className="text-xs font-medium text-gray-500">{(storageUsage / 1024).toFixed(1)} KB / ~5 MB</span>
-                 </div>
-                 <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
-                     <div className={`h-full rounded-full transition-all duration-500 ${usageColor}`} style={{ width: `${usagePercent}%` }}></div>
-                 </div>
-                 <p className="text-[10px] text-gray-400 mt-2 text-right">瀏覽器限制約 5MB，請定期備份以免資料遺失。</p>
+                    </div>
+                    <span className="text-xs font-medium text-gray-500">{(storageUsage / 1024).toFixed(1)} KB / ~5 MB</span>
+                </div>
+                <div className="h-2 w-full bg-gray-100 rounded-full overflow-hidden">
+                    <div className={`h-full rounded-full transition-all duration-500 ${usageColor}`} style={{ width: `${usagePercent}%` }}></div>
+                </div>
+                <p className="text-[10px] text-gray-400 mt-2 text-right">瀏覽器限制約 5MB，請定期備份以免資料遺失。</p>
             </CardContainer>
 
             <div onClick={handleExport} className="bg-white rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 flex items-center justify-center gap-2 cursor-pointer active:bg-gray-50 transition-colors"><Download className="w-5 h-5 text-black" /><span className="text-base font-bold text-black">匯出交易紀錄 (Excel/CSV)</span></div>
@@ -1188,11 +1190,11 @@ export default function App() {
             {activeTab === 'settings' && renderSettingsView()}
           </div>
           <div className="flex-none bg-white/95 backdrop-blur-xl border-t border-gray-200 pb-[calc(env(safe-area-inset-bottom)+5px)] pt-2 px-2 flex justify-around items-center z-30">
-            <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'dashboard' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}><PieChart className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">總覽</span></button>
-            <button onClick={() => { setActiveTab('history'); setFilterCategory(null); }} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'history' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}><List className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">明細</span></button>
+            <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'dashboard' ? 'bg-gray-100 text-black' : 'text-gray-400 active:bg-gray-50'}`}><PieChart className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">總覽</span></button>
+            <button onClick={() => { setActiveTab('history'); setFilterCategory(null); setFilterTag(null); }} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'history' ? 'bg-gray-100 text-black' : 'text-gray-400 active:bg-gray-50'}`}><List className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">明細</span></button>
             <div className="relative -top-6"><button onClick={handleFabClick} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-xl hover:scale-105 transition-transform ${activeTab === 'form' && !editingId ? 'bg-gray-900 rotate-45' : 'bg-black'}`}><Plus className="w-7 h-7" strokeWidth={3} /></button></div>
-            <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'investment' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}><TrendingUp className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">投資</span></button>
-            <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'settings' ? 'bg-gray-100 text-black' : 'text-gray-400 hover:bg-gray-50'}`}><Settings className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">設定</span></button>
+            <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'investment' ? 'bg-gray-100 text-black' : 'text-gray-400 active:bg-gray-50'}`}><TrendingUp className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">投資</span></button>
+            <button onClick={() => setActiveTab('settings')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'settings' ? 'bg-gray-100 text-black' : 'text-gray-400 active:bg-gray-50'}`}><Settings className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-[10px] font-bold">設定</span></button>
           </div>
         </div>
       </div>
