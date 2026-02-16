@@ -11,7 +11,8 @@ interface Transaction {
   category: string;
   amount: number;
   type: 'income' | 'expense';
-  tag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative';
+  // [MODIFIED] 新增 'invest_savings'
+  tag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative' | 'invest_savings';
   note: string;
   groupId?: string;
   investSource?: 'monthly' | 'cumulative';
@@ -89,7 +90,7 @@ const INITIAL_STATS_DATA: StatsData = {
   initialInvestable: 0 
 };
 
-// [NEW] 預設支出分類 (不含收入與投資，這兩者為系統保留)
+// 預設支出分類
 const DEFAULT_EXPENSE_CATEGORIES = [
   '房租', '飲食', '交通', '電子產品', '健身', '旅遊', '娛樂', '生活雜費', '教育', '醫療'
 ];
@@ -144,8 +145,6 @@ export default function App() {
   }, []);
 
   // --- State Initialization ---
-  
-  // [NEW] 自訂分類 State
   const [expenseCategories, setExpenseCategories] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('yupao_categories_v2');
@@ -175,7 +174,7 @@ export default function App() {
     } catch (e) { return INITIAL_BUDGETS; }
   });
 
-  // [NEW] Storage Usage State
+  // Storage Usage State
   const [storageUsage, setStorageUsage] = useState(0);
 
   useEffect(() => { localStorage.setItem('yupao_transactions_v2', JSON.stringify(transactions)); }, [transactions]);
@@ -183,13 +182,12 @@ export default function App() {
   useEffect(() => { localStorage.setItem('yupao_budgets_v2', JSON.stringify(budgets)); }, [budgets]);
   useEffect(() => { localStorage.setItem('yupao_categories_v2', JSON.stringify(expenseCategories)); }, [expenseCategories]);
 
-  // [NEW] Calculate Storage Usage on any data change
+  // Calculate Storage Usage
   useEffect(() => {
     const calculateStorage = () => {
         let total = 0;
         for (let key in localStorage) {
             if (localStorage.hasOwnProperty(key)) {
-                // UTF-16 characters are 2 bytes each
                 total += ((localStorage[key].length + key.length) * 2);
             }
         }
@@ -221,7 +219,6 @@ export default function App() {
   }, [availableMonths, selectedMonth]);
 
   // Form State
-  // [MODIFIED] Helper to determine default category
   const getDefaultCategory = () => {
       if (expenseCategories.includes('飲食')) return '飲食';
       return expenseCategories[0] || '一般';
@@ -229,7 +226,7 @@ export default function App() {
 
   const [formData, setFormData] = useState({
     date: getLocalDayString(),
-    category: getDefaultCategory(), // [MODIFIED] Use helper
+    category: getDefaultCategory(),
     amount: '',
     note: '',
     tag: 'need' as 'need' | 'want' | 'income', 
@@ -272,7 +269,7 @@ export default function App() {
     transactions.forEach(t => {
         let typeLabel = t.type === 'income' ? '收入' : '支出';
         let specialLabel = '一般月收支';
-        if (t.category === '投資') specialLabel = t.investSource === 'cumulative' ? '累積資金投資' : '當月額度投資';
+        if (t.category === '投資') specialLabel = t.fromSavings ? '存款投資(Sale)' : (t.investSource === 'cumulative' ? '累積資金投資' : '當月額度投資');
         else if (t.fromSavings) specialLabel = '存款支付';
         else if (t.fromEmergency) specialLabel = '預備金支付';
         else if (t.isAssetLiquidation) specialLabel = '資產變現';
@@ -378,8 +375,15 @@ export default function App() {
         else monthlyRawData[monthKey].income += amount;
       } else if (t.category === '投資') {
         monthlyRawData[monthKey].actualInvested += amount;
-        if (t.investSource === 'cumulative') monthlyRawData[monthKey].investedFromCumulative += amount;
-        else monthlyRawData[monthKey].investedFromMonthly += amount;
+        
+        // [MODIFIED] 投資計算邏輯更新
+        if (t.tag === 'invest_savings' || t.fromSavings) {
+             monthlyRawData[monthKey].savingsExpense += amount;
+        } else if (t.investSource === 'cumulative') {
+             monthlyRawData[monthKey].investedFromCumulative += amount;
+        } else {
+             monthlyRawData[monthKey].investedFromMonthly += amount;
+        }
       } else {
         if (t.fromSavings) monthlyRawData[monthKey].savingsExpense += amount;
         else if (t.fromEmergency) monthlyRawData[monthKey].emergencyExpense += amount;
@@ -496,7 +500,7 @@ export default function App() {
     setEditingId(null);
     setFormData({ 
       date: getLocalDayString(), 
-      category: getDefaultCategory(), // [MODIFIED] Prioritize '飲食'
+      category: getDefaultCategory(),
       amount: '', note: '', tag: 'need', type: 'expense',
       isInstallment: false, installmentCount: '3', installmentCalcType: 'total', perMonthInput: '',
       investSource: 'monthly', fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
@@ -555,8 +559,17 @@ export default function App() {
     } catch(e) {}
 
     let finalTag: any = formData.tag;
-    if (formData.category === '收入') finalTag = 'income';
-    else if (formData.category === '投資') finalTag = formData.investSource === 'cumulative' ? 'invest_cumulative' : 'invest_monthly';
+    
+    // [MODIFIED] 存檔時 Tag 邏輯
+    if (formData.category === '收入') {
+        finalTag = 'income';
+    } else if (formData.category === '投資') {
+        if (formData.fromSavings) {
+             finalTag = 'invest_savings';
+        } else {
+             finalTag = formData.investSource === 'cumulative' ? 'invest_cumulative' : 'invest_monthly';
+        }
+    }
 
     if (editingId) {
       const originalTrans = transactions.find(t => t.id === editingId);
@@ -616,12 +629,12 @@ export default function App() {
        const [y, m, d] = formData.date.split('-').map(Number);
        const startDay = d;
        const groupId = `group_${baseId}_${Date.now()}`; 
-         
+          
        for (let i = 0; i < count; i++) {
           const currentAmount = i === 0 ? perMonthAmount + remainder : perMonthAmount; 
           const nextDate = new Date(y, m - 1 + i, d);
           if (nextDate.getDate() !== startDay) nextDate.setDate(0); 
-         
+          
           newTransactions.push({
             id: baseId + i, ...formData, date: formatDateToLocal(nextDate), amount: currentAmount,
             note: `${formData.note} (${i + 1}/${count})`, groupId: groupId, tag: finalTag, fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
@@ -836,23 +849,34 @@ export default function App() {
     let effectiveMonthlyLimit = monthlyRemainingInvestable;
     let effectiveCumulativeLimit = cumulativeAddOnAvailable;
 
+    // [MODIFIED] 編輯回補邏輯
     if (editingId) {
         const originalTrans = transactions.find(t => t.id === editingId);
         if (originalTrans && originalTrans.category === '投資') {
-            if (originalTrans.investSource === 'monthly') effectiveMonthlyLimit += originalTrans.amount;
-            else if (originalTrans.investSource === 'cumulative') effectiveCumulativeLimit += originalTrans.amount;
+             if (originalTrans.tag === 'invest_savings' || originalTrans.fromSavings) {
+                // 如果原本是存款投資，不需回補額度
+            } else if (originalTrans.investSource === 'monthly') {
+                effectiveMonthlyLimit += originalTrans.amount;
+            } else if (originalTrans.investSource === 'cumulative') {
+                effectiveCumulativeLimit += originalTrans.amount;
+            }
         }
     }
+
     const currentSavings = savings;
     const currentEmergency = emergencyFund;
+    // [MODIFIED] 驗證：存款是否足夠
     const isSavingsInsufficient = formData.fromSavings && (Number(formData.amount) > currentSavings);
     const isEmergencyInsufficient = formData.fromEmergency && (Number(formData.amount) > currentEmergency);
     
     let isInvestmentInsufficient = false;
     if (formData.type === 'expense' && formData.category === '投資') {
         const amount = Number(formData.amount);
-        if (formData.investSource === 'monthly' && amount > effectiveMonthlyLimit) isInvestmentInsufficient = true;
-        else if (formData.investSource === 'cumulative' && amount > effectiveCumulativeLimit) isInvestmentInsufficient = true;
+        // 如果不是從存款投資，才檢查額度
+        if (!formData.fromSavings) {
+            if (formData.investSource === 'monthly' && amount > effectiveMonthlyLimit) isInvestmentInsufficient = true;
+            else if (formData.investSource === 'cumulative' && amount > effectiveCumulativeLimit) isInvestmentInsufficient = true;
+        }
     }
     const isSubmitDisabled = isSavingsInsufficient || isEmergencyInsufficient || isInvestmentInsufficient;
 
@@ -898,17 +922,37 @@ export default function App() {
                 <div className="p-5">
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">資金來源</p>
                     <div className="space-y-4">
-                        <div onClick={() => setFormData({...formData, investSource: 'monthly'})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${formData.investSource === 'monthly' ? 'bg-blue-50/50' : ''}`}>
+                        {/* Option 1: Monthly */}
+                        <div onClick={() => setFormData({...formData, investSource: 'monthly', fromSavings: false})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${!formData.fromSavings && formData.investSource === 'monthly' ? 'bg-blue-50/50' : ''}`}>
                             <div className="flex flex-col"><span className="text-base font-medium text-gray-900">當月可投資金額</span><span className={`text-[11px] font-bold mt-0.5 ${effectiveMonthlyLimit < 0 ? 'text-red-400' : 'text-blue-500'}`}>餘額: ${formatMoney(effectiveMonthlyLimit)}</span></div>
-                            <div className="relative flex items-center"><input type="radio" name="investSource" checked={formData.investSource === 'monthly'} onChange={() => setFormData({...formData, investSource: 'monthly'})} className="w-5 h-5 text-black accent-black" /></div>
+                            <div className="relative flex items-center"><input type="radio" name="investSource" checked={!formData.fromSavings && formData.investSource === 'monthly'} onChange={() => {}} className="w-5 h-5 text-black accent-black" /></div>
                         </div>
+                        
                         <div className="h-px bg-gray-50 w-full ml-4"></div>
-                        <div onClick={() => setFormData({...formData, investSource: 'cumulative'})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${formData.investSource === 'cumulative' ? 'bg-orange-50/50' : ''}`}>
+                        
+                        {/* Option 2: Cumulative */}
+                        <div onClick={() => setFormData({...formData, investSource: 'cumulative', fromSavings: false})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${!formData.fromSavings && formData.investSource === 'cumulative' ? 'bg-orange-50/50' : ''}`}>
                              <div className="flex flex-col"><span className="text-base font-medium text-black">歷史累積可加碼資金</span><span className={`text-[11px] font-bold mt-0.5 ${effectiveCumulativeLimit < 0 ? 'text-red-400' : 'text-[#C59D5F]'}`}>餘額: ${formatMoney(effectiveCumulativeLimit)}</span></div>
-                            <input type="radio" name="investSource" checked={formData.investSource === 'cumulative'} onChange={() => setFormData({...formData, investSource: 'cumulative'})} className="w-5 h-5 text-black accent-black" />
+                            <input type="radio" name="investSource" checked={!formData.fromSavings && formData.investSource === 'cumulative'} onChange={() => {}} className="w-5 h-5 text-black accent-black" />
+                        </div>
+
+                        <div className="h-px bg-gray-50 w-full ml-4"></div>
+
+                        {/* [MODIFIED] Option 3: Savings (Sale/Dip) */}
+                        <div onClick={() => setFormData({...formData, fromSavings: true})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${formData.fromSavings ? 'bg-[#FEEBC8]/50' : ''}`}>
+                             <div className="flex flex-col">
+                                <div className="flex items-center gap-1.5">
+                                    <span className="text-base font-medium text-black">現金存款加碼</span>
+                                
+                                </div>
+                                <span className={`text-[11px] font-bold mt-0.5 ${currentSavings < Number(formData.amount) ? 'text-red-400' : 'text-[#975A16]'}`}>存款餘額: ${formatMoney(currentSavings)}</span>
+                             </div>
+                            <input type="radio" name="investSource" checked={formData.fromSavings} onChange={() => {}} className="w-5 h-5 text-black accent-black" />
                         </div>
                     </div>
-                    {isInvestmentInsufficient && <div className="flex items-center gap-2 px-2 mt-4 text-[#E53E3E] animate-pulse"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">投資額度不足，請調整金額或來源</span></div>}
+                    
+                    {isInvestmentInsufficient && !formData.fromSavings && <div className="flex items-center gap-2 px-2 mt-4 text-[#E53E3E] animate-pulse"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">投資額度不足，請調整金額或來源</span></div>}
+                    {isSavingsInsufficient && <div className="flex items-center gap-2 px-2 mt-4 text-[#E53E3E] animate-pulse"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">現金存款不足以支付此金額</span></div>}
                 </div>
             ) : formData.type === 'expense' ? (
                 <div className="p-4 flex flex-col gap-4">
@@ -1110,7 +1154,7 @@ export default function App() {
         <div className="space-y-6 pt-2">
         <div className="flex items-end justify-between px-1 mb-2"><h2 className="text-3xl font-extrabold text-black tracking-tight">設定</h2></div>
         
-        {/* [NEW] 分類管理區塊 */}
+        {/* 分類管理區塊 */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">分類管理</h4>
             <CardContainer className="p-4">
@@ -1144,7 +1188,7 @@ export default function App() {
             </CardContainer>
         </div>
         
-        {/* [NEW] 資料管理區塊 (含儲存空間顯示) */}
+        {/* 資料管理區塊 (含儲存空間顯示) */}
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">資料管理</h4>
             
@@ -1166,7 +1210,7 @@ export default function App() {
         </div>
 
         <div className="pt-6"><h4 className="text-xs font-bold text-red-500 uppercase tracking-wide mb-2 ml-2">危險區域</h4><div onClick={() => setResetModal(true)} className="bg-red-50 rounded-2xl p-4 border border-red-100 flex items-center justify-center gap-2 cursor-pointer active:bg-red-100 transition-colors"><AlertTriangle className="w-5 h-5 text-red-500" /><span className="text-base font-bold text-red-600">初始化 App (清空所有資料)</span></div><p className="text-[10px] text-gray-400 mt-2 text-center">如果儲存空間滿了或發生錯誤，可使用此功能重置。</p></div>
-        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v8.6</p></div>
+        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v8.7</p></div>
         </div>
     );
   };
