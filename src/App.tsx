@@ -10,15 +10,15 @@ interface Transaction {
   date: string;
   category: string;
   amount: number;
-  type: 'income' | 'expense';
-  // [MODIFIED] 新增 'invest_savings'
-  tag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative' | 'invest_savings';
+  type: 'income' | 'expense' | 'transfer';
+  tag: 'need' | 'want' | 'income' | 'invest_monthly' | 'invest_cumulative' | 'invest_savings' | 'transfer';
   note: string;
   groupId?: string;
   investSource?: 'monthly' | 'cumulative';
   fromSavings?: boolean; 
   fromEmergency?: boolean; 
   isAssetLiquidation?: boolean; 
+  transferDirection?: 'to_savings' | 'to_investable';
 }
 
 interface Budgets {
@@ -31,6 +31,7 @@ interface StatsData {
   emergencyCurrent: number; 
   emergencyGoal: number; 
   initialInvestable?: number; 
+  savingsFloor?: number; // [MODIFIED] 新增大額消費保留底線
 }
 
 interface MonthlyData {
@@ -43,6 +44,8 @@ interface MonthlyData {
   actualInvested: number;
   investedFromMonthly: number; 
   investedFromCumulative: number; 
+  transferToSavings: number;
+  transferToInvestable: number;
   need: number;
   want: number;
   categoryMap: { [key: string]: number };
@@ -87,7 +90,8 @@ const INITIAL_STATS_DATA: StatsData = {
   savings: 0,
   emergencyCurrent: 0, 
   emergencyGoal: 0, 
-  initialInvestable: 0 
+  initialInvestable: 0,
+  savingsFloor: 0 // [MODIFIED] 初始化保留底線為 0
 };
 
 // 預設支出分類
@@ -229,8 +233,8 @@ export default function App() {
     category: getDefaultCategory(),
     amount: '',
     note: '',
-    tag: 'need' as 'need' | 'want' | 'income', 
-    type: 'expense' as 'income' | 'expense',
+    tag: 'need' as 'need' | 'want' | 'income' | 'transfer', 
+    type: 'expense' as 'income' | 'expense' | 'transfer',
     isInstallment: false, 
     installmentCount: '3',  
     installmentCalcType: 'total' as 'total' | 'monthly', 
@@ -239,6 +243,7 @@ export default function App() {
     fromSavings: false, 
     fromEmergency: false, 
     isAssetLiquidation: false, 
+    transferDirection: 'to_savings' as 'to_savings' | 'to_investable',
   });
     
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -261,15 +266,18 @@ export default function App() {
     csvRows.push(`"初始資產配置-累積可加碼資金", "${cumulativeAddOnAvailable}"`);
     csvRows.push(`"初始資產配置-當月可投資金額", "${monthlyRemainingInvestable}"`);
     csvRows.push(`"初始資產配置-現金累積存款", "${savings}"`);
+    csvRows.push(`"大額消費保留底線", "${initialStats.savingsFloor || 0}"`);
     csvRows.push("");
 
     const headers = ['ID', '日期', '類型', '分類', '金額', '標籤', '備註', '資金屬性', '分期ID'];
     csvRows.push(headers.join(','));
 
     transactions.forEach(t => {
-        let typeLabel = t.type === 'income' ? '收入' : '支出';
+        let typeLabel = t.type === 'income' ? '收入' : t.type === 'transfer' ? '劃轉' : '支出';
         let specialLabel = '一般月收支';
-        if (t.category === '投資') specialLabel = t.fromSavings ? '存款投資(Sale)' : (t.investSource === 'cumulative' ? '累積資金投資' : '當月額度投資');
+        
+        if (t.type === 'transfer') specialLabel = t.transferDirection === 'to_savings' ? '投資轉存款' : '存款轉投資';
+        else if (t.category === '投資') specialLabel = t.fromSavings ? '存款投資(Sale)' : (t.investSource === 'cumulative' ? '累積資金投資' : '當月額度投資');
         else if (t.fromSavings) specialLabel = '存款支付';
         else if (t.fromEmergency) specialLabel = '預備金支付';
         else if (t.isAssetLiquidation) specialLabel = '資產變現';
@@ -361,22 +369,28 @@ export default function App() {
     let monthlyRawData: { [key: string]: MonthlyData } = {};
     
     availableMonths.forEach(m => {
-        monthlyRawData[m] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
+        monthlyRawData[m] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, transferToSavings: 0, transferToInvestable: 0, need: 0, want: 0, categoryMap: {} };
     });
 
     transactions.forEach(t => {
       const monthKey = t.date.substring(0, 7);
       if (!monthlyRawData[monthKey]) {
-          monthlyRawData[monthKey] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
+          monthlyRawData[monthKey] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, transferToSavings: 0, transferToInvestable: 0, need: 0, want: 0, categoryMap: {} };
       }
       const amount = Number(t.amount);
-      if (t.category === '收入') {
+      
+      if (t.type === 'transfer') {
+          if (t.transferDirection === 'to_savings') {
+              monthlyRawData[monthKey].transferToSavings += amount;
+          } else if (t.transferDirection === 'to_investable') {
+              monthlyRawData[monthKey].transferToInvestable += amount;
+          }
+      } else if (t.category === '收入') {
         if (t.isAssetLiquidation) monthlyRawData[monthKey].assetLiquidation += amount;
         else monthlyRawData[monthKey].income += amount;
       } else if (t.category === '投資') {
         monthlyRawData[monthKey].actualInvested += amount;
         
-        // [MODIFIED] 投資計算邏輯更新
         if (t.tag === 'invest_savings' || t.fromSavings) {
              monthlyRawData[monthKey].savingsExpense += amount;
         } else if (t.investSource === 'cumulative') {
@@ -409,7 +423,7 @@ export default function App() {
         while (curY < maxY || (curY === maxY && curM <= maxM)) {
             const key = `${curY}-${String(curM).padStart(2, '0')}`;
             if (!monthlyRawData[key]) {
-                monthlyRawData[key] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0, categoryMap: {} };
+                monthlyRawData[key] = { income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, transferToSavings: 0, transferToInvestable: 0, need: 0, want: 0, categoryMap: {} };
             }
             curM++;
             if (curM > 12) { curM = 1; curY++; }
@@ -426,12 +440,11 @@ export default function App() {
     let processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     sortedMonthsAsc.forEach(month => {
-      const { income, assetLiquidation, expense, installmentExpense, savingsExpense, emergencyExpense, actualInvested, investedFromMonthly, investedFromCumulative, categoryMap, need, want } = monthlyRawData[month];
+      const { income, assetLiquidation, expense, installmentExpense, savingsExpense, emergencyExpense, actualInvested, investedFromMonthly, investedFromCumulative, transferToSavings, transferToInvestable, categoryMap, need, want } = monthlyRawData[month];
       const netIncome = income - expense; 
       let monthlyMaxInvestable = carryOverBudget; 
       let currentMonthCumulativeRemaining = cumulativeInvestable - investedFromCumulative;
       let currentMonthMonthlyRemaining = monthlyMaxInvestable - investedFromMonthly;
-      cumulativeSavings = cumulativeSavings + assetLiquidation - savingsExpense;
       
       runningEmergencyFund -= emergencyExpense;
 
@@ -467,13 +480,19 @@ export default function App() {
             currentMonthSavingsAddon = availableSurplus * 0.1;
         }
       }
+      
+      // 計算最終存款與可加碼資金 (包含劃轉邏輯)
+      cumulativeSavings = cumulativeSavings + assetLiquidation - savingsExpense + transferToSavings - transferToInvestable;
       cumulativeSavings += currentMonthSavingsAddon;
+      
+      currentMonthCumulativeRemaining = currentMonthCumulativeRemaining - transferToSavings + transferToInvestable;
       cumulativeInvestable = currentMonthCumulativeRemaining + currentMonthMonthlyRemaining;
+      
       carryOverBudget = surplusForNextMonth;
 
       processedMonthsData[month] = {
           income, assetLiquidation, expense, installmentExpense, savingsExpense, emergencyExpense, netIncome, categoryMap,
-          actualInvested, investedFromMonthly, investedFromCumulative, need, want, monthlyMaxInvestable,
+          actualInvested, investedFromMonthly, investedFromCumulative, transferToSavings, transferToInvestable, need, want, monthlyMaxInvestable,
           monthlyRemainingInvestable: currentMonthMonthlyRemaining, cumulativeAddOnAvailable: currentMonthCumulativeRemaining, 
           deficitDeducted, accumulatedDeficit: unfilledDeficit, savings: cumulativeSavings, emergencyFund: runningEmergencyFund,
           divertedToEmergency, repaidDeficit, capitalDivertedToEmergency: 0, emergencyGoal
@@ -482,7 +501,7 @@ export default function App() {
 
     const currentData = processedMonthsData[selectedMonth] || {
         income: 0, assetLiquidation: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, netIncome: 0, categoryMap: {}, 
-        actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, need: 0, want: 0,
+        actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, transferToSavings: 0, transferToInvestable: 0, need: 0, want: 0,
         monthlyMaxInvestable: carryOverBudget, monthlyRemainingInvestable: carryOverBudget - 0, 
         cumulativeAddOnAvailable: cumulativeInvestable, deficitDeducted: 0, accumulatedDeficit: unfilledDeficit, savings: cumulativeSavings, 
         emergencyFund: runningEmergencyFund, divertedToEmergency: 0, repaidDeficit: 0, capitalDivertedToEmergency: 0, emergencyGoal: emergencyGoal
@@ -503,7 +522,7 @@ export default function App() {
       category: getDefaultCategory(),
       amount: '', note: '', tag: 'need', type: 'expense',
       isInstallment: false, installmentCount: '3', installmentCalcType: 'total', perMonthInput: '',
-      investSource: 'monthly', fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
+      investSource: 'monthly', fromSavings: false, fromEmergency: false, isAssetLiquidation: false, transferDirection: 'to_savings'
     });
     setActiveTab('form');
   };
@@ -516,7 +535,7 @@ export default function App() {
       date: trans.date, category: trans.category, amount: trans.amount.toString(), 
       note: trans.note.replace(/\(\d+\/\d+\)$/, '').trim(), tag: trans.tag as any, type: trans.type,
       isInstallment: false, installmentCount: '3', installmentCalcType: 'total', perMonthInput: '',
-      investSource: source, fromSavings: trans.fromSavings || false, fromEmergency: trans.fromEmergency || false, isAssetLiquidation: trans.isAssetLiquidation || false,
+      investSource: source, fromSavings: trans.fromSavings || false, fromEmergency: trans.fromEmergency || false, isAssetLiquidation: trans.isAssetLiquidation || false, transferDirection: trans.transferDirection || 'to_savings'
     });
     setActiveTab('form');
   };
@@ -559,9 +578,13 @@ export default function App() {
     } catch(e) {}
 
     let finalTag: any = formData.tag;
+    let finalCategory = formData.category;
+    let finalTransferDirection = formData.transferDirection;
     
-    // [MODIFIED] 存檔時 Tag 邏輯
-    if (formData.category === '收入') {
+    if (formData.type === 'transfer') {
+        finalTag = 'transfer';
+        finalCategory = '資金劃轉';
+    } else if (formData.category === '收入') {
         finalTag = 'income';
     } else if (formData.category === '投資') {
         if (formData.fromSavings) {
@@ -590,17 +613,17 @@ export default function App() {
 
                   if (t.id === editingId) {
                       return {
-                          ...t, date: newDate, category: formData.category,
+                          ...t, date: newDate, category: finalCategory,
                           amount: Number(finalAmount), tag: finalTag, 
-                          note: formData.note, 
+                          note: formData.note, type: formData.type, transferDirection: formData.type === 'transfer' ? finalTransferDirection : undefined,
                           fromSavings: formData.fromSavings, fromEmergency: formData.fromEmergency, isAssetLiquidation: formData.isAssetLiquidation,
                       };
                   } else {
                       return {
                           ...t, 
                           date: newDate, 
-                          category: formData.category,
-                          tag: finalTag,
+                          category: finalCategory,
+                          tag: finalTag, type: formData.type, transferDirection: formData.type === 'transfer' ? finalTransferDirection : undefined,
                           fromSavings: formData.fromSavings,
                           fromEmergency: formData.fromEmergency,
                           isAssetLiquidation: formData.isAssetLiquidation,
@@ -611,7 +634,7 @@ export default function App() {
           });
           setTransactions(updatedTransactions);
       } else {
-          setTransactions(transactions.map(t => t.id === editingId ? { ...t, ...formData, tag: finalTag, amount: Number(finalAmount), fromSavings: formData.fromSavings, fromEmergency: formData.fromEmergency, isAssetLiquidation: formData.isAssetLiquidation } : t));
+          setTransactions(transactions.map(t => t.id === editingId ? { ...t, ...formData, type: formData.type, transferDirection: formData.type === 'transfer' ? finalTransferDirection : undefined, category: finalCategory, tag: finalTag, amount: Number(finalAmount), fromSavings: formData.fromSavings, fromEmergency: formData.fromEmergency, isAssetLiquidation: formData.isAssetLiquidation } : t));
       }
       setActiveTab('history');
       return;
@@ -619,7 +642,7 @@ export default function App() {
     
     const baseId = transactions.length > 0 ? Math.max(...transactions.map(t => t.id)) + 1 : 1;
     const totalAmount = Number(finalAmount);
-    const shouldInstallment = !formData.fromSavings && !formData.fromEmergency && !formData.isAssetLiquidation && formData.isInstallment && formData.type === 'expense' && formData.category !== '投資' && Number(formData.installmentCount) > 1;
+    const shouldInstallment = formData.type === 'expense' && !formData.fromSavings && !formData.fromEmergency && !formData.isAssetLiquidation && formData.isInstallment && formData.category !== '投資' && Number(formData.installmentCount) > 1;
 
     if (shouldInstallment) {
        const newTransactions: Transaction[] = [];
@@ -636,13 +659,13 @@ export default function App() {
           if (nextDate.getDate() !== startDay) nextDate.setDate(0); 
           
           newTransactions.push({
-            id: baseId + i, ...formData, date: formatDateToLocal(nextDate), amount: currentAmount,
+            id: baseId + i, ...formData, type: formData.type, category: finalCategory, date: formatDateToLocal(nextDate), amount: currentAmount,
             note: `${formData.note} (${i + 1}/${count})`, groupId: groupId, tag: finalTag, fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
           });
        }
        setTransactions([...newTransactions, ...transactions]);
     } else {
-       const item: Transaction = { id: baseId, ...formData, tag: finalTag, amount: totalAmount };
+       const item: Transaction = { id: baseId, ...formData, type: formData.type, category: finalCategory, tag: finalTag, amount: totalAmount, transferDirection: formData.type === 'transfer' ? finalTransferDirection : undefined };
        setTransactions([item, ...transactions]);
     }
     setActiveTab('history');
@@ -849,7 +872,6 @@ export default function App() {
     let effectiveMonthlyLimit = monthlyRemainingInvestable;
     let effectiveCumulativeLimit = cumulativeAddOnAvailable;
 
-    // [MODIFIED] 編輯回補邏輯
     if (editingId) {
         const originalTrans = transactions.find(t => t.id === editingId);
         if (originalTrans && originalTrans.category === '投資') {
@@ -865,20 +887,38 @@ export default function App() {
 
     const currentSavings = savings;
     const currentEmergency = emergencyFund;
-    // [MODIFIED] 驗證：存款是否足夠
+    const savingsFloor = initialStats.savingsFloor || 0; // [MODIFIED] 取得保留底線
+    
     const isSavingsInsufficient = formData.fromSavings && (Number(formData.amount) > currentSavings);
     const isEmergencyInsufficient = formData.fromEmergency && (Number(formData.amount) > currentEmergency);
     
     let isInvestmentInsufficient = false;
     if (formData.type === 'expense' && formData.category === '投資') {
         const amount = Number(formData.amount);
-        // 如果不是從存款投資，才檢查額度
         if (!formData.fromSavings) {
             if (formData.investSource === 'monthly' && amount > effectiveMonthlyLimit) isInvestmentInsufficient = true;
             else if (formData.investSource === 'cumulative' && amount > effectiveCumulativeLimit) isInvestmentInsufficient = true;
         }
     }
-    const isSubmitDisabled = isSavingsInsufficient || isEmergencyInsufficient || isInvestmentInsufficient;
+
+    let isTransferInsufficient = false;
+    let isSavingsFloorBreached = false; // [MODIFIED] 新增保留底線驗證狀態
+    
+    if (formData.type === 'transfer') {
+        const amount = Number(formData.amount);
+        if (formData.transferDirection === 'to_savings' && amount > effectiveCumulativeLimit) {
+            isTransferInsufficient = true;
+        }
+        if (formData.transferDirection === 'to_investable') {
+            if (amount > currentSavings) {
+                isTransferInsufficient = true;
+            } else if (currentSavings - amount < savingsFloor) {
+                isSavingsFloorBreached = true; // [MODIFIED] 觸及底線
+            }
+        }
+    }
+
+    const isSubmitDisabled = isSavingsInsufficient || isEmergencyInsufficient || isInvestmentInsufficient || isTransferInsufficient || isSavingsFloorBreached;
 
     return (
         <div className="space-y-5 pb-20 pt-2">
@@ -886,10 +926,11 @@ export default function App() {
             <button onClick={() => setActiveTab('dashboard')} className="flex items-center text-gray-500 font-medium -ml-2 p-2 hover:bg-gray-100 rounded-lg transition"><ChevronLeft className="w-5 h-5" /> 返回</button>
             <div className="w-10"></div>
         </div>
-        <div className="bg-gray-200/60 p-1.5 rounded-xl flex relative">
-            <div className={`absolute top-1.5 bottom-1.5 w-[calc(50%-6px)] bg-white rounded-[10px] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${formData.type === 'expense' ? 'left-1.5' : 'left-[calc(50%+1.5px)]'}`}></div>
+        <div className="bg-gray-200/60 p-1.5 rounded-xl flex relative mb-4">
+            <div className={`absolute top-1.5 bottom-1.5 w-[calc(33.33%-4px)] bg-white rounded-[10px] shadow-sm transition-all duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] ${formData.type === 'expense' ? 'left-1.5' : formData.type === 'income' ? 'left-[calc(33.33%+2px)]' : 'left-[calc(66.66%+2px)]'}`}></div>
             <button onClick={() => setFormData({...formData, type: 'expense', category: '飲食', tag: 'need', investSource: 'monthly', isAssetLiquidation: false})} className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'expense' ? 'text-gray-900' : 'text-gray-500'}`}>支出</button>
             <button onClick={() => setFormData({...formData, type: 'income', category: '收入', tag: 'income', investSource: 'monthly', fromSavings: false, fromEmergency: false})} className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'income' ? 'text-gray-900' : 'text-gray-500'}`}>收入</button>
+            <button onClick={() => setFormData({...formData, type: 'transfer', category: '資金劃轉', tag: 'transfer', transferDirection: 'to_savings', fromSavings: false, fromEmergency: false, isAssetLiquidation: false})} className={`flex-1 py-2 text-sm font-bold relative z-10 transition-colors ${formData.type === 'transfer' ? 'text-gray-900' : 'text-gray-500'}`}>劃轉</button>
         </div>
         <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
             <div className="flex items-center justify-between p-5 border-b border-gray-50">
@@ -909,16 +950,33 @@ export default function App() {
             <div className="flex items-center justify-between p-5">
                 <label className="text-base font-bold text-black">分類</label>
                 <div className="flex items-center gap-2 relative">
-                    <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} 
-                        className="text-base font-medium text-gray-600 bg-transparent outline-none text-right appearance-none pr-6 relative z-10"
-                        style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3e%3c/path%3e%3c/svg%3e")`, backgroundPosition: 'right center', backgroundRepeat: 'no-repeat', backgroundSize: '1em 1em' }}>
-                        {formData.type === 'income' ? <option value="收入">收入</option> : <>{expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資</option></>}
-                    </select>
+                    {formData.type === 'transfer' ? (
+                        <span className="text-base font-medium text-gray-600">資金劃轉</span>
+                    ) : (
+                        <select value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})} 
+                            className="text-base font-medium text-gray-600 bg-transparent outline-none text-right appearance-none pr-6 relative z-10"
+                            style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3e%3c/path%3e%3c/svg%3e")`, backgroundPosition: 'right center', backgroundRepeat: 'no-repeat', backgroundSize: '1em 1em' }}>
+                            {formData.type === 'income' ? <option value="收入">收入</option> : <>{expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}<option value="投資">投資</option></>}
+                        </select>
+                    )}
                 </div>
             </div>
         </div>
         <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
-            {formData.type === 'expense' && formData.category === '投資' ? (
+            {formData.type === 'transfer' ? (
+                <div className="p-4 flex flex-col gap-4">
+                    <div className="flex gap-3">
+                        <button onClick={() => setFormData({...formData, transferDirection: 'to_savings'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.transferDirection === 'to_savings' ? 'bg-[#FEEBC8] text-[#975A16] border-[#FBD38D]' : 'bg-white text-gray-400 border-gray-200'}`}>投資 ➔ 存款</button>
+                        <button onClick={() => setFormData({...formData, transferDirection: 'to_investable'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.transferDirection === 'to_investable' ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-white text-gray-400 border-gray-200'}`}>存款 ➔ 投資</button>
+                    </div>
+                    {formData.transferDirection === 'to_investable' && savingsFloor > 0 && (
+                        <p className="text-[10px] text-gray-500 px-2 mt-[-8px]">當前保留底線：${formatMoney(savingsFloor)} (可動用：${formatMoney(Math.max(0, currentSavings - savingsFloor))})</p>
+                    )}
+                    {formData.transferDirection === 'to_savings' && Number(formData.amount) > effectiveCumulativeLimit && <div className="flex items-center gap-2 px-2 text-[#E53E3E]"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">歷史可加碼資金不足以轉出</span></div>}
+                    {formData.transferDirection === 'to_investable' && isTransferInsufficient && <div className="flex items-center gap-2 px-2 text-[#E53E3E]"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">現金存款不足以轉出</span></div>}
+                    {formData.transferDirection === 'to_investable' && isSavingsFloorBreached && !isTransferInsufficient && <div className="flex items-center gap-2 px-2 text-[#E53E3E]"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">已觸及大額消費保留底線，請保留現金</span></div>}
+                </div>
+            ) : formData.type === 'expense' && formData.category === '投資' ? (
                 <div className="p-5">
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-4">資金來源</p>
                     <div className="space-y-4">
@@ -938,7 +996,7 @@ export default function App() {
 
                         <div className="h-px bg-gray-50 w-full ml-4"></div>
 
-                        {/* [MODIFIED] Option 3: Savings (Sale/Dip) */}
+                        {/* Option 3: Savings (Sale/Dip) */}
                         <div onClick={() => setFormData({...formData, fromSavings: true})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${formData.fromSavings ? 'bg-[#FEEBC8]/50' : ''}`}>
                              <div className="flex flex-col">
                                 <div className="flex items-center gap-1.5">
@@ -1096,18 +1154,37 @@ export default function App() {
           <div key={groupName}>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-1">{groupName}</h4>
             <div className="bg-white rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 divide-y divide-gray-50">
-              {(groupItems as Transaction[]).map(t => (
+              {(groupItems as Transaction[]).map(t => {
+                const isTransfer = t.type === 'transfer';
+                return (
                 <div key={t.id} className="relative overflow-hidden" onTouchStart={(e) => handleTouchStart(e, t.id)} onTouchMove={(e) => handleTouchMove(e, t.id)} onTouchEnd={handleTouchEnd}>
                     <div className="absolute inset-y-0 right-0 w-24 bg-[#FF3B30] flex items-center justify-center z-0" onClick={(e) => requestDelete(e, t.id)}><Trash2 className="w-6 h-6 text-white" /></div>
                     <div onClick={() => openEditMode(t)} className={`p-4 flex justify-between items-center bg-white relative z-10 transition-transform duration-300 ease-out ${swipedId === t.id ? '-translate-x-24' : 'translate-x-0'} active:bg-gray-50`}>
                         <div className="flex items-center gap-4 overflow-hidden">
-                            <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${t.type === 'income' ? 'bg-green-50 text-[#34C759]' : t.category === '投資' ? 'bg-gray-100 text-black' : 'bg-gray-100 text-gray-500'}`}>{t.category === '投資' ? <TrendingUp className="w-5 h-5" /> : <DollarSign className="w-5 h-5" />}</div>
-                            <div className="min-w-0"><div className="flex items-center gap-2"><p className="font-bold text-gray-900 text-base truncate">{t.category}</p>{t.groupId && <span className="bg-gray-100 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-md">分期</span>}{t.fromSavings && <span className="bg-[#FEEBC8] text-[#975A16] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><PiggyBank className="w-2.5 h-2.5" /> 存款</span>}{t.fromEmergency && <span className="bg-red-100 text-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><ShieldAlert className="w-2.5 h-2.5" /> 預備金</span>}{t.isAssetLiquidation && <span className="bg-[#E6FFFA] text-[#2C7A7B] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><RefreshCcw className="w-2.5 h-2.5" /> 變現</span>}</div><p className="text-xs text-gray-400 truncate mt-0.5">{t.date} • {t.note || '無備註'}</p></div>
+                            <div className={`flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center ${t.type === 'income' ? 'bg-green-50 text-[#34C759]' : t.category === '投資' ? 'bg-gray-100 text-black' : isTransfer ? 'bg-blue-50 text-[#5AC8FA]' : 'bg-gray-100 text-gray-500'}`}>
+                                {t.category === '投資' ? <TrendingUp className="w-5 h-5" /> : isTransfer ? <RefreshCcw className="w-5 h-5" /> : <DollarSign className="w-5 h-5" />}
+                            </div>
+                            <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                    <p className="font-bold text-gray-900 text-base truncate">{t.category}</p>
+                                    {t.groupId && <span className="bg-gray-100 text-black text-[9px] font-bold px-1.5 py-0.5 rounded-md">分期</span>}
+                                    {t.fromSavings && <span className="bg-[#FEEBC8] text-[#975A16] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><PiggyBank className="w-2.5 h-2.5" /> 存款</span>}
+                                    {t.fromEmergency && <span className="bg-red-100 text-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><ShieldAlert className="w-2.5 h-2.5" /> 預備金</span>}
+                                    {t.isAssetLiquidation && <span className="bg-[#E6FFFA] text-[#2C7A7B] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><RefreshCcw className="w-2.5 h-2.5" /> 變現</span>}
+                                    {isTransfer && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${t.transferDirection === 'to_savings' ? 'bg-[#FEEBC8] text-[#975A16]' : 'bg-orange-50 text-orange-600'}`}>{t.transferDirection === 'to_savings' ? '投資 ➔ 存款' : '存款 ➔ 投資'}</span>}
+                                </div>
+                                <p className="text-xs text-gray-400 truncate mt-0.5">{t.date} • {t.note || '無備註'}</p>
+                            </div>
                         </div>
-                        <div className="text-right"><p className={`font-bold text-base ${t.type === 'income' ? 'text-[#34C759]' : 'text-black'}`}>{t.type === 'income' ? '+' : '-'}{formatMoney(t.amount)}</p>{t.category !== '投資' && t.type === 'expense' && (<span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${t.tag === 'need' ? 'bg-gray-100 text-gray-500' : 'bg-[#FFF5F7] text-[#D53F8C]'}`}>{t.tag === 'need' ? '需要' : '想要'}</span>)}</div>
+                        <div className="text-right">
+                            <p className={`font-bold text-base ${t.type === 'income' ? 'text-[#34C759]' : isTransfer ? 'text-[#5AC8FA]' : 'text-black'}`}>
+                                {t.type === 'income' ? '+' : isTransfer ? '⇌' : '-'}{formatMoney(t.amount)}
+                            </p>
+                            {t.category !== '投資' && t.type === 'expense' && (<span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${t.tag === 'need' ? 'bg-gray-100 text-gray-500' : 'bg-[#FFF5F7] text-[#D53F8C]'}`}>{t.tag === 'need' ? '需要' : '想要'}</span>)}
+                        </div>
                     </div>
                 </div>
-              ))}
+              )})}
             </div>
           </div>
         ))}
@@ -1178,7 +1255,30 @@ export default function App() {
         </div>
 
         <div><h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">緊急預備金</h4><CardContainer className="divide-y divide-gray-50"><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-black">初始金額</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.emergencyCurrent || ''} onChange={e => handleStatChange('emergencyCurrent', e.target.value)} /></div><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-black">目標金額</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.emergencyGoal || ''} onChange={e => handleStatChange('emergencyGoal', e.target.value)} /></div></CardContainer><p className="text-xs text-gray-400 mt-2 ml-2">建議設定為 3~6 個月的生活開銷</p></div>
-        <div><h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">初始資產配置</h4><CardContainer className="divide-y divide-gray-50"><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-gray-900">累積可加碼資金</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.available || ''} onChange={e => handleStatChange('available', e.target.value)} /></div><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-gray-900">當月可投資金額</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.initialInvestable || ''} onChange={e => handleStatChange('initialInvestable', e.target.value)} /></div><div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-gray-900">現金累積存款</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.savings || ''} onChange={e => handleStatChange('savings', e.target.value)} /></div></CardContainer></div>
+        
+        <div>
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">初始資產配置</h4>
+            <CardContainer className="divide-y divide-gray-50">
+                <div className="p-4 flex items-center justify-between">
+                    <label className="text-base font-medium text-gray-900">累積可加碼資金</label>
+                    <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.available || ''} onChange={e => handleStatChange('available', e.target.value)} />
+                </div>
+                <div className="p-4 flex items-center justify-between">
+                    <label className="text-base font-medium text-gray-900">當月可投資金額</label>
+                    <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.initialInvestable || ''} onChange={e => handleStatChange('initialInvestable', e.target.value)} />
+                </div>
+                <div className="p-4 flex items-center justify-between">
+                    <label className="text-base font-medium text-gray-900">現金累積存款</label>
+                    <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.savings || ''} onChange={e => handleStatChange('savings', e.target.value)} />
+                </div>
+                <div className="p-4 flex items-center justify-between bg-[#FEEBC8]/30">
+                    <label className="text-base font-medium text-[#975A16]">大額消費保留底線</label>
+                    <input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-[#975A16] w-32" value={initialStats.savingsFloor || ''} onChange={e => handleStatChange('savingsFloor', e.target.value)} />
+                </div>
+            </CardContainer>
+            <p className="text-xs text-gray-400 mt-2 ml-2">設定保留底線，避免將未來大額消費資金（相機、旅遊等）轉入投資</p>
+        </div>
+
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">每月預算設定</h4>
             <CardContainer className="divide-y divide-gray-50">
@@ -1210,7 +1310,7 @@ export default function App() {
         </div>
 
         <div className="pt-6"><h4 className="text-xs font-bold text-red-500 uppercase tracking-wide mb-2 ml-2">危險區域</h4><div onClick={() => setResetModal(true)} className="bg-red-50 rounded-2xl p-4 border border-red-100 flex items-center justify-center gap-2 cursor-pointer active:bg-red-100 transition-colors"><AlertTriangle className="w-5 h-5 text-red-500" /><span className="text-base font-bold text-red-600">初始化 App (清空所有資料)</span></div><p className="text-[10px] text-gray-400 mt-2 text-center">如果儲存空間滿了或發生錯誤，可使用此功能重置。</p></div>
-        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v8.7</p></div>
+        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v8.9</p></div>
         </div>
     );
   };
