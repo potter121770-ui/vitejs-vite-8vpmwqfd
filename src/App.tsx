@@ -1194,11 +1194,17 @@ export default function App() {
   };
 
   const renderInvestmentView = () => (
-    <div className="relative pt-2">
-       <div className="p-7 rounded-[28px] text-white shadow-2xl relative overflow-hidden mb-6" style={{ backgroundColor: THEME.darkBg }}>
+    <div className="space-y-4 pb-4 pt-2">
+      <div className="flex justify-start items-center px-1">
+          <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}
+            className="bg-white text-black font-bold text-sm rounded-full px-4 py-2 border border-gray-200 outline-none shadow-sm appearance-none pr-8 relative z-10"
+            style={{ backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='currentColor'%3e%3cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3e%3c/path%3e%3c/svg%3e")`, backgroundPosition: 'right 0.5rem center', backgroundRepeat: 'no-repeat', backgroundSize: '1.5em 1.5em' }}>
+            {availableMonths.map(m => ( <option key={m} value={m}>{m}</option> ))}
+          </select>
+      </div>
+      <div className="p-7 rounded-[28px] text-white shadow-2xl relative overflow-hidden mb-6" style={{ backgroundColor: THEME.darkBg }}>
         <div className="absolute top-[-20%] right-[-20%] w-[80%] h-[80%] bg-white/5 blur-[60px] rounded-full pointer-events-none"></div>
         <div className="relative z-10">
-          <div className="flex justify-between items-start mb-8"><div><h1 className="text-3xl font-bold tracking-tight">臨界財富</h1><p className="text-[11px] font-medium text-gray-400 mt-1">累積資產，直達臨界點</p></div><span className="text-xs font-bold bg-white/10 px-3 py-1 rounded-lg text-gray-300 backdrop-blur-md border border-white/5">{selectedMonth}</span></div>
           <div className="grid grid-cols-2 gap-4">
             <div className="p-4 rounded-2xl backdrop-blur-sm border border-white/5" style={{ backgroundColor: THEME.darkCard }}><div className="flex items-center gap-1.5 mb-2"><p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">本月可投資金額</p><Info className="w-3 h-3 text-gray-500 cursor-help" /></div><p className="text-2xl font-bold" style={{ color: THEME.textBlue }}>${formatMoney(stats.investment.monthlyMaxInvestable)}</p>{stats.investment.divertedToEmergency > 0 && (<p className="text-[9px] text-[#F6AD55] mt-1 opacity-80">(月餘額扣除 ${formatMoney(stats.investment.divertedToEmergency)} 至預備金)</p>)}{stats.investment.repaidDeficit > 0 && (<p className="text-[9px] text-red-300 mt-1 opacity-80">(月餘額優先填補赤字 ${formatMoney(stats.investment.repaidDeficit)})</p>)}</div>
             <div className="p-4 rounded-2xl backdrop-blur-sm border border-white/5" style={{ backgroundColor: THEME.darkCard }}><p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">實際投入金額</p><p className="text-2xl font-bold" style={{ color: THEME.textGreen }}>${formatMoney(stats.investment.actualInvested)}</p></div>
