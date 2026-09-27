@@ -60,6 +60,7 @@ interface StatsData {
   priceCsvUrl?: string;           // Google 試算表發布的 CSV 網址
   stressCrypto?: number;          // 壓力測試：加密貨幣跌幅 (%)
   stressEquity?: number;          // 壓力測試：股票跌幅 (%)
+  emergencyAutoFrom?: string;     // 自動預備金從哪個月份開始生效 (YYYY-MM)，之前的月份維持固定目標
 }
 
 interface MonthlyData {
@@ -295,7 +296,10 @@ export default function App() {
     try {
       const saved = localStorage.getItem('yupao_stats_v4');
       const parsed = saved ? JSON.parse(saved) : INITIAL_STATS_DATA;
-      return { ...INITIAL_STATS_DATA, ...parsed };
+      const merged: StatsData = { ...INITIAL_STATS_DATA, ...parsed };
+      // 遷移：已經開啟自動模式但沒有起始月份的，從本月開始生效，避免改寫過去月份
+      if (merged.emergencyMode === 'auto' && !merged.emergencyAutoFrom) merged.emergencyAutoFrom = getLocalMonthString();
+      return merged;
     } catch (e) { return INITIAL_STATS_DATA; }
   });
 
@@ -663,17 +667,19 @@ export default function App() {
     const processedMonthsData: { [key: string]: ProcessedMonthData } = {};
 
     // 自動預備金：只用「之前」月份的需要支出，避免當月還沒記完造成低估
-    const computeEmergencyGoal = () => {
+    const autoFrom = initialStats.emergencyAutoFrom || getLocalMonthString();
+    // 自動目標只從開啟的月份起生效；過去的月份維持當時的固定目標，歷史不會被重新分配
+    const computeEmergencyGoal = (month: string) => {
         const recent = needHistory.filter(v => v > 0).slice(-NEED_LOOKBACK_MONTHS);
         const avgNeed = recent.length > 0 ? recent.reduce((s, v) => s + v, 0) / recent.length : 0;
         const autoGoal = Math.round(avgNeed * emergencyMonths);
-        const goal = isAutoEmergency && avgNeed > 0 ? Math.max(fixedEmergencyGoal, autoGoal) : fixedEmergencyGoal;
+        const goal = isAutoEmergency && month >= autoFrom && avgNeed > 0 ? Math.max(fixedEmergencyGoal, autoGoal) : fixedEmergencyGoal;
         return { goal, avgNeed, sampleMonths: recent.length };
     };
 
     sortedMonthsAsc.forEach(month => {
       const data = monthlyRawData[month];
-      const { goal: emergencyGoal, avgNeed, sampleMonths } = computeEmergencyGoal();
+      const { goal: emergencyGoal, avgNeed, sampleMonths } = computeEmergencyGoal(month);
       
       let monthlyMaxInvestable = carryOverBudget; 
       let currentMonthMonthlyRemaining = monthlyMaxInvestable;
@@ -816,7 +822,7 @@ export default function App() {
             };
         }
 
-        const next = computeEmergencyGoal();
+        const next = computeEmergencyGoal(month);
         return {
             ...initMonthObj(),
             netIncome: 0,
@@ -1979,7 +1985,7 @@ export default function App() {
                 <div className="p-3">
                     <div className="flex bg-gray-100 p-1 rounded-lg">
                         <button onClick={() => setInitialStats(prev => ({ ...prev, emergencyMode: 'fixed' }))} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${!isAutoEmergency ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}>固定目標</button>
-                        <button onClick={() => setInitialStats(prev => ({ ...prev, emergencyMode: 'auto' }))} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${isAutoEmergency ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}>依支出自動調整</button>
+                        <button onClick={() => setInitialStats(prev => prev.emergencyMode === 'auto' ? prev : ({ ...prev, emergencyMode: 'auto', emergencyAutoFrom: getLocalMonthString() }))} className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${isAutoEmergency ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}>依支出自動調整</button>
                     </div>
                 </div>
                 <div className="p-4 flex items-center justify-between"><label className="text-base font-medium text-black">初始</label><input type="text" inputMode="numeric" pattern="[0-9]*" placeholder="0" className="text-base font-medium text-right outline-none text-black w-32" value={initialStats.emergencyCurrent || ''} onChange={e => handleStatChange('emergencyCurrent', e.target.value)} /></div>
@@ -1991,7 +1997,7 @@ export default function App() {
             <p className="text-xs text-gray-400 mt-2 ml-2 leading-relaxed">
                 {isAutoEmergency
                     ? (nowStats.needSampleMonths > 0
-                        ? `目標 = 最近 ${nowStats.needSampleMonths} 個月「需要」支出平均 $${formatMoney(nowStats.avgNeed)} × ${initialStats.emergencyMonths || 6} 個月，且不低於最低目標。本月目標：$${formatMoney(nowStats.emergencyGoal)}。`
+                        ? `從 ${initialStats.emergencyAutoFrom || getLocalMonthString()} 起生效，之前的月份維持固定目標。目標 = 最近 ${nowStats.needSampleMonths} 個月「需要」支出平均 $${formatMoney(nowStats.avgNeed)} × ${initialStats.emergencyMonths || 6} 個月，且不低於最低目標。本月目標：$${formatMoney(nowStats.emergencyGoal)}。`
                         : '還沒有足夠的「需要」支出紀錄，暫時使用最低目標。')
                     : '未達標前，自動鎖定新增投資。'}
             </p>
