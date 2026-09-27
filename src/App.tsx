@@ -6,7 +6,7 @@ import {
 
 // --- Type Definitions ---
 type TxTag = 'need' | 'want' | 'advance' | 'income' | 'invest_monthly' | 'invest_cumulative' | 'invest_savings' | 'transfer';
-type AssetKind = 'crypto' | 'equity' | 'other';
+type AssetKind = 'crypto' | 'equity' | 'cash' | 'other';
 
 interface Transaction {
   id: number;
@@ -25,7 +25,9 @@ interface Transaction {
   asset?: string;              // 投資標的 / 變現標的
   quantity?: number;           // 買到 / 賣出的數量（選填）
   adjustTarget?: 'emergency' | 'savings' | 'cumulative'; // 餘額校正的對象（金額可為負）
-  transferDirection?: 'to_savings' | 'to_investable' | 'invest_to_emergency' | 'savings_to_emergency';
+  transferDirection?: 'to_savings' | 'to_investable' | 'invest_to_emergency' | 'savings_to_emergency' | 'asset_swap';
+  fromAsset?: string;          // 資產轉換：從哪個標的
+  fromQuantity?: number;       // 資產轉換：轉出的數量
 }
 
 interface Asset {
@@ -160,11 +162,13 @@ const DEFAULT_ASSETS: Asset[] = [
   { name: 'ETH', kind: 'crypto', baseline: 0 },
   { name: 'VT', kind: 'equity', baseline: 0 },
   { name: '00631L', kind: 'equity', baseline: 0, leverage: 2 },
+  { name: '投資現金', kind: 'cash', baseline: 0 },
 ];
 
 const ASSET_KIND_LABEL: { [key in AssetKind]: string } = {
   crypto: '加密貨幣',
   equity: '股票/ETF',
+  cash: '投資現金',
   other: '其他',
 };
 
@@ -228,8 +232,11 @@ const getCorr = (market: MarketData, a: string, b: string) => {
 };
 
 // 風險貢獻：RC_i = w_i (Σw)_i / σp²
-const computeRisk = (items: { name: string; value: number }[], market: MarketData, window: 'long' | 'short') => {
-  const volMap = window === 'long' ? market.volLong : market.volShort;
+const computeRisk = (items: { name: string; value: number }[], market: MarketData, window: 'long' | 'short', cashNames: Set<string> = new Set()) => {
+  const rawVolMap = window === 'long' ? market.volLong : market.volShort;
+  // 現金：波動度 0，和任何資產的相關係數視為 0
+  const volMap: { [key: string]: number } = { ...rawVolMap };
+  cashNames.forEach(n => { volMap[n] = 0; });
   const usable = items.filter(i => i.value > 0 && volMap[i.name] !== undefined);
   const missing = items.filter(i => i.value > 0 && volMap[i.name] === undefined).map(i => i.name);
   const total = usable.reduce((s, i) => s + i.value, 0);
@@ -238,6 +245,7 @@ const computeRisk = (items: { name: string; value: number }[], market: MarketDat
   const w = usable.map(i => i.value / total);
   const vol = usable.map(i => volMap[i.name]);
   const cov = usable.map((a, i) => usable.map((b, j) => {
+    if (i !== j && (cashNames.has(a.name) || cashNames.has(b.name))) return 0;
     const c = getCorr(market, a.name, b.name);
     if (c === null) { missingCorr = true; return 0; }
     return c * vol[i] * vol[j];
@@ -318,7 +326,9 @@ export default function App() {
   const [assets, setAssets] = useState<Asset[]>(() => {
     try {
       const saved = localStorage.getItem('yupao_assets_v4');
-      return saved ? JSON.parse(saved) : DEFAULT_ASSETS;
+      const parsed: Asset[] = saved ? JSON.parse(saved) : DEFAULT_ASSETS;
+      // 遷移：舊資料沒有投資現金時自動補上
+      return parsed.some(a => a.kind === 'cash') ? parsed : [...parsed, { name: '投資現金', kind: 'cash', baseline: 0 }];
     } catch (e) { return DEFAULT_ASSETS; }
   });
 
@@ -378,6 +388,7 @@ export default function App() {
     const source: { [key: string]: 'market' | 'estimate' } = {};
     assets.forEach(a => {
       const qty = assetQty[a.name] || 0;
+      if (a.kind === 'cash') { values[a.name] = qty; source[a.name] = 'market'; return; } // 現金的「數量」就是台幣金額
       const price = market.prices[a.name];
       if (qty > 0 && price !== undefined) { values[a.name] = qty * price; source[a.name] = 'market'; }
       else { values[a.name] = assetTotals[a.name] || 0; source[a.name] = 'estimate'; }
@@ -435,7 +446,9 @@ export default function App() {
     isReimbursement: false,
     asset: '',
     quantity: '',
-    transferDirection: 'to_savings' as 'to_savings' | 'to_investable' | 'invest_to_emergency' | 'savings_to_emergency',
+    fromAsset: '',
+    fromQuantity: '',
+    transferDirection: 'to_savings' as 'to_savings' | 'to_investable' | 'invest_to_emergency' | 'savings_to_emergency' | 'asset_swap',
   });
     
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -478,6 +491,7 @@ export default function App() {
              else if (t.transferDirection === 'to_investable') specialLabel = '存款轉投資';
              else if (t.transferDirection === 'invest_to_emergency') specialLabel = '投資轉預備金';
              else if (t.transferDirection === 'savings_to_emergency') specialLabel = '存款轉預備金';
+             else if (t.transferDirection === 'asset_swap') specialLabel = `資產轉換 ${t.fromAsset || ''}→${t.asset || ''}`;
         }
         else if (t.category === '投資') specialLabel = t.fromSavings ? '存款投資' : (t.investSource === 'cumulative' ? '累積資金投資' : '當月額度投資');
         else if (t.fromSavings) specialLabel = '存款支付';
@@ -502,6 +516,51 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // --- 完整備份（JSON）：可以完整還原，CSV 只適合用 Excel 查看 ---
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const [backupMessage, setBackupMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const handleExportBackup = () => {
+    const payload = {
+      app: 'critical-wealth', version: 1, exportedAt: new Date().toISOString(),
+      transactions, initialStats, budgets, expenseCategories, assets, market,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `critical_wealth_backup_${getLocalDayString()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    setBackupMessage({ ok: true, text: `已匯出 ${transactions.length} 筆紀錄` });
+  };
+
+  const handleImportBackup = (e: { target: HTMLInputElement }) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // 讓同一個檔案可以再選一次
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(String(reader.result));
+        if (!data || !Array.isArray(data.transactions)) throw new Error('檔案裡找不到交易紀錄');
+        const ok = window.confirm(`這會用備份（${data.exportedAt ? String(data.exportedAt).substring(0, 10) : '日期不明'}，${data.transactions.length} 筆紀錄）取代目前所有資料，確定嗎？`);
+        if (!ok) return;
+        setTransactions(data.transactions);
+        if (data.initialStats) setInitialStats({ ...INITIAL_STATS_DATA, ...data.initialStats });
+        if (data.budgets) setBudgets(data.budgets);
+        if (Array.isArray(data.expenseCategories)) setExpenseCategories(data.expenseCategories);
+        if (Array.isArray(data.assets)) setAssets(data.assets);
+        if (data.market) setMarket({ ...EMPTY_MARKET, ...data.market });
+        setBackupMessage({ ok: true, text: `已匯入 ${data.transactions.length} 筆紀錄` });
+      } catch (err: any) {
+        setBackupMessage({ ok: false, text: `匯入失敗：${err?.message || '檔案格式不正確'}（請選擇 .json 備份檔，CSV 無法匯入）` });
+      }
+    };
+    reader.readAsText(file);
   };
 
   const handleResetApp = () => {
@@ -605,6 +664,12 @@ export default function App() {
               else m.transferInvestToEmergencyFromCumulative += amount;
           } else if (t.transferDirection === 'savings_to_emergency') {
               m.transferSavingsToEmergency += amount;
+          } else if (t.transferDirection === 'asset_swap') {
+              // 資產轉換：只改變標的之間的配置，不影響任何預算或現金池
+              if (t.asset) m.investedByAsset[t.asset] = (m.investedByAsset[t.asset] || 0) + amount;
+              if (t.fromAsset) m.liquidatedByAsset[t.fromAsset] = (m.liquidatedByAsset[t.fromAsset] || 0) + amount;
+              if (t.asset && t.quantity) m.qtyBoughtByAsset[t.asset] = (m.qtyBoughtByAsset[t.asset] || 0) + t.quantity;
+              if (t.fromAsset && t.fromQuantity) m.qtySoldByAsset[t.fromAsset] = (m.qtySoldByAsset[t.fromAsset] || 0) + t.fromQuantity;
           }
       } else if (t.category === '收入') {
         if (t.isAssetLiquidation) {
@@ -880,7 +945,7 @@ export default function App() {
       category: getDefaultCategory(),
       amount: '', note: '', tag: 'need', type: 'expense',
       isInstallment: false, installmentCount: '3', installmentCalcType: 'total', perMonthInput: '',
-      investSource: 'monthly', fromSavings: false, fromEmergency: false, isAssetLiquidation: false, isReimbursement: false, asset: '', quantity: '', transferDirection: 'to_savings'
+      investSource: 'monthly', fromSavings: false, fromEmergency: false, isAssetLiquidation: false, isReimbursement: false, asset: '', quantity: '', fromAsset: '', fromQuantity: '', transferDirection: 'to_savings'
     });
     setActiveTab('form');
   };
@@ -897,6 +962,8 @@ export default function App() {
       investSource: source, fromSavings: trans.fromSavings || false, fromEmergency: trans.fromEmergency || false, isAssetLiquidation: trans.isAssetLiquidation || false,
       isReimbursement: trans.isReimbursement || false, asset: trans.asset || '',
       quantity: trans.quantity ? String(trans.quantity) : '',
+      fromAsset: trans.fromAsset || '',
+      fromQuantity: trans.fromQuantity ? String(trans.fromQuantity) : '',
       transferDirection: trans.transferDirection || 'to_savings'
     });
     setActiveTab('form');
@@ -973,10 +1040,19 @@ export default function App() {
 
     const isInvestExpense = formData.type === 'expense' && finalCategory === '投資';
     const isLiquidationIncome = formData.type === 'income' && formData.isAssetLiquidation;
-    const finalAsset = (isInvestExpense || isLiquidationIncome) && formData.asset ? formData.asset : undefined;
+    const isAssetSwap = formData.type === 'transfer' && formData.transferDirection === 'asset_swap';
+    const finalAsset = (isInvestExpense || isLiquidationIncome || isAssetSwap) && formData.asset ? formData.asset : undefined;
+    const isCashAsset = (name?: string) => !!name && assets.some(a => a.name === name && a.kind === 'cash');
     const finalReimbursement = formData.type === 'income' && !formData.isAssetLiquidation && formData.isReimbursement;
     const parsedQty = Number(formData.quantity);
-    const finalQuantity = finalAsset && isFinite(parsedQty) && parsedQty > 0 ? parsedQty : undefined;
+    // 投資現金的數量就是台幣金額，自動帶入
+    const finalQuantity = finalAsset && isCashAsset(finalAsset) ? Number(finalAmount)
+        : finalAsset && isFinite(parsedQty) && parsedQty > 0 ? parsedQty : undefined;
+    const finalFromAsset = isAssetSwap && formData.fromAsset ? formData.fromAsset : undefined;
+    const parsedFromQty = Number(formData.fromQuantity);
+    const finalFromQuantity = !finalFromAsset ? undefined
+        : isCashAsset(finalFromAsset) ? Number(finalAmount)
+        : isFinite(parsedFromQty) && parsedFromQty > 0 ? parsedFromQty : undefined;
     const finalInvestSource = (formData.type === 'transfer' && (finalTransferDirection === 'to_savings' || finalTransferDirection === 'invest_to_emergency')) || isInvestExpense ? formData.investSource : undefined;
 
     if (editingId) {
@@ -1001,6 +1077,7 @@ export default function App() {
                       transferDirection: formData.type === 'transfer' ? finalTransferDirection : undefined,
                       fromSavings: formData.fromSavings, fromEmergency: formData.fromEmergency, isAssetLiquidation: formData.isAssetLiquidation,
                       isReimbursement: finalReimbursement, asset: finalAsset, quantity: finalQuantity, investSource: finalInvestSource,
+                      fromAsset: finalFromAsset, fromQuantity: finalFromQuantity,
                   };
 
                   if (t.id === editingId) {
@@ -1017,7 +1094,8 @@ export default function App() {
               transferDirection: formData.type === 'transfer' ? finalTransferDirection : undefined,
               category: finalCategory, tag: finalTag, amount: Number(finalAmount),
               fromSavings: formData.fromSavings, fromEmergency: formData.fromEmergency, isAssetLiquidation: formData.isAssetLiquidation,
-              isReimbursement: finalReimbursement, asset: finalAsset, quantity: finalQuantity, investSource: finalInvestSource
+              isReimbursement: finalReimbursement, asset: finalAsset, quantity: finalQuantity, investSource: finalInvestSource,
+              fromAsset: finalFromAsset, fromQuantity: finalFromQuantity
           } : t));
       }
       setActiveTab('history');
@@ -1046,6 +1124,7 @@ export default function App() {
             id: baseId + i, ...formData, type: formData.type, category: finalCategory, date: formatDateToLocal(nextDate), amount: currentAmount,
             note: `${formData.note} (${i + 1}/${count})`, groupId: groupId, tag: finalTag, fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
             isReimbursement: false, asset: undefined, quantity: undefined, investSource: undefined,
+            fromAsset: undefined, fromQuantity: undefined,
           });
        }
        setTransactions([...newTransactions, ...transactions]);
@@ -1053,7 +1132,8 @@ export default function App() {
        const item: Transaction = { 
            id: baseId, ...formData, type: formData.type, category: finalCategory, tag: finalTag, amount: totalAmount, 
            transferDirection: formData.type === 'transfer' ? finalTransferDirection : undefined,
-           isReimbursement: finalReimbursement, asset: finalAsset, quantity: finalQuantity, investSource: finalInvestSource
+           isReimbursement: finalReimbursement, asset: finalAsset, quantity: finalQuantity, investSource: finalInvestSource,
+           fromAsset: finalFromAsset, fromQuantity: finalFromQuantity
        };
        setTransactions([item, ...transactions]);
     }
@@ -1279,15 +1359,17 @@ export default function App() {
     );
   }
   
-  const renderAssetChips = (onPick: (name: string) => void) => (
+  const isCashName = (name: string) => assets.some(a => a.name === name && a.kind === 'cash');
+
+  const renderAssetChips = (onPick: (name: string) => void, selectedName: string = formData.asset) => (
     <div className="flex flex-wrap gap-2">
       {assets.map(a => {
-        const selected = formData.asset === a.name;
+        const selected = selectedName === a.name;
         return (
           <button key={a.name} type="button" onClick={() => onPick(selected ? '' : a.name)}
             className={`px-3 py-1.5 rounded-full text-sm font-bold border transition ${selected ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200'}`}>
             {a.name}
-            <span className={`ml-1 text-[9px] font-medium ${selected ? 'text-white/60' : 'text-gray-300'}`}>{a.kind === 'crypto' ? '幣' : a.kind === 'equity' ? '股' : ''}</span>
+            <span className={`ml-1 text-[9px] font-medium ${selected ? 'text-white/60' : 'text-gray-300'}`}>{a.kind === 'crypto' ? '幣' : a.kind === 'equity' ? '股' : a.kind === 'cash' ? '現' : ''}</span>
           </button>
         );
       })}
@@ -1391,7 +1473,9 @@ export default function App() {
     const isEmergencyNotFull = emergencyGoal > 0 && currentEmergency < emergencyGoal;
     const isInvestmentBlockedByEmergency = isInvestForm && isEmergencyNotFull;
 
-    const isSubmitDisabled = isSavingsInsufficient || isEmergencyInsufficient || isInvestmentInsufficient || isTransferInsufficient || isTransferMonthlyInsufficient || isTransferCumulativeInsufficient || isSavingsFloorBreached || isInvestmentBlockedByEmergency;
+    const isSwap = formData.type === 'transfer' && formData.transferDirection === 'asset_swap';
+    const isSwapInvalid = isSwap && (!formData.asset || !formData.fromAsset || formData.asset === formData.fromAsset);
+    const isSubmitDisabled = isSwapInvalid || isSavingsInsufficient || isEmergencyInsufficient || isInvestmentInsufficient || isTransferInsufficient || isTransferMonthlyInsufficient || isTransferCumulativeInsufficient || isSavingsFloorBreached || isInvestmentBlockedByEmergency;
 
     return (
         <div className="space-y-5 pb-20 pt-2">
@@ -1449,7 +1533,32 @@ export default function App() {
                         <button onClick={() => setFormData({...formData, transferDirection: 'to_investable'})} className={`py-3 rounded-xl text-sm font-bold transition border ${formData.transferDirection === 'to_investable' ? 'bg-orange-50 text-orange-600 border-orange-200' : 'bg-white text-gray-400 border-gray-200'}`}>存款 ➔ 投資</button>
                         <button onClick={() => setFormData({...formData, transferDirection: 'invest_to_emergency'})} className={`py-3 rounded-xl text-sm font-bold transition border ${formData.transferDirection === 'invest_to_emergency' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-white text-gray-400 border-gray-200'}`}>投資 ➔ 預備金</button>
                         <button onClick={() => setFormData({...formData, transferDirection: 'savings_to_emergency'})} className={`py-3 rounded-xl text-sm font-bold transition border ${formData.transferDirection === 'savings_to_emergency' ? 'bg-indigo-50 text-indigo-600 border-indigo-200' : 'bg-white text-gray-400 border-gray-200'}`}>存款 ➔ 預備金</button>
+                        <button onClick={() => setFormData({...formData, transferDirection: 'asset_swap', fromAsset: formData.fromAsset || (assets.find(a => a.kind === 'cash')?.name || '')})} className={`col-span-2 py-3 rounded-xl text-sm font-bold transition border ${formData.transferDirection === 'asset_swap' ? 'bg-gray-900 text-white border-gray-900' : 'bg-white text-gray-400 border-gray-200'}`}>資產轉換（例如現金 ➔ BTC）</button>
                     </div>
+
+                    {formData.transferDirection === 'asset_swap' && (
+                        <div className="space-y-4">
+                            <p className="text-[11px] text-gray-500">金額填這次轉換的台幣價值。只改變標的之間的配置，不會動到任何預算或額度。</p>
+                            <div>
+                                <p className="text-xs font-bold text-gray-400 mb-2">從</p>
+                                {renderAssetChips(name => setFormData({...formData, fromAsset: name}), formData.fromAsset)}
+                                {formData.fromAsset && !isCashName(formData.fromAsset) && (
+                                    <div className="mt-3 flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2 border border-gray-100">
+                                        <span className="text-xs font-bold text-gray-500">轉出的數量（選填）</span>
+                                        <input type="text" inputMode="decimal" placeholder="0" value={formData.fromQuantity}
+                                            onChange={e => { if (/^\d*\.?\d*$/.test(e.target.value)) setFormData({ ...formData, fromQuantity: e.target.value }); }}
+                                            className="text-right text-sm font-bold text-black bg-transparent outline-none w-32" />
+                                    </div>
+                                )}
+                            </div>
+                            <div>
+                                <p className="text-xs font-bold text-gray-400 mb-2">到</p>
+                                {renderAssetChips(name => setFormData({...formData, asset: name}))}
+                                {formData.asset && !isCashName(formData.asset) && renderQuantityInput('買到的數量')}
+                            </div>
+                            {isSwapInvalid && <div className="flex items-center gap-2 px-2 text-[#E53E3E]"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">請選擇兩個不同的標的</span></div>}
+                        </div>
+                    )}
 
                     {(formData.transferDirection === 'to_savings' || formData.transferDirection === 'invest_to_emergency') && (
                         <div className="space-y-3 mt-2">
@@ -1509,7 +1618,8 @@ export default function App() {
                         <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">投資標的</p>
                         {renderAssetChips(name => setFormData({...formData, asset: name}))}
                         {!formData.asset && assets.length > 0 && <p className="text-[10px] text-gray-400 mt-2">未指定標的不會計入配置比例</p>}
-                        {formData.asset && renderQuantityInput('買到的數量')}
+                        {formData.asset && !isCashName(formData.asset) && renderQuantityInput('買到的數量')}
+                        {formData.asset && isCashName(formData.asset) && <p className="text-[10px] text-gray-500 mt-2">入金到交易所或券商、但還沒買資產時選這個。之後買進時，用「劃轉 → 資產轉換」從現金轉出。</p>}
                         {cryptoCap > 0 && (
                             <p className="text-[11px] text-gray-500 mt-3">
                                 加密貨幣比例 {baseCryptoShare.toFixed(1)}%
@@ -1564,7 +1674,7 @@ export default function App() {
                         <div className="px-1 pb-1">
                             <p className="text-[10px] text-gray-500 mb-2">賣出哪個標的？（選填，會從配置中扣除）</p>
                             {renderAssetChips(name => setFormData({...formData, asset: name}))}
-                            {formData.asset && renderQuantityInput('賣出的數量')}
+                            {formData.asset && !isCashName(formData.asset) && renderQuantityInput('賣出的數量')}
                         </div>
                     )}
 
@@ -1714,7 +1824,7 @@ export default function App() {
                                     {t.isAssetLiquidation && <span className="bg-[#E6FFFA] text-[#2C7A7B] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><RefreshCcw className="w-2.5 h-2.5" /> 變現{t.asset ? ` ${t.asset}` : ''}</span>}
                                     {t.isReimbursement && <span className="bg-[#EEF0FF] text-[#5856D6] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><Tag className="w-2.5 h-2.5" /> 代墊還款</span>}
                                     {isAdjust && <span className="bg-yellow-50 text-yellow-700 text-[9px] font-bold px-1.5 py-0.5 rounded-md">{t.adjustTarget === 'savings' ? '現金存款' : t.adjustTarget === 'cumulative' ? '歷史可加碼' : '預備金'}</span>}
-                                    {isTransfer && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${t.transferDirection === 'to_savings' ? 'bg-[#FEEBC8] text-[#975A16]' : t.transferDirection === 'to_investable' ? 'bg-blue-50 text-blue-600' : 'bg-red-50 text-red-600'}`}>{t.transferDirection === 'to_savings' ? '投資➔存款' : t.transferDirection === 'to_investable' ? '存款➔投資' : t.transferDirection === 'invest_to_emergency' ? '投資➔預備金' : '存款➔預備金'}</span>}
+                                    {isTransfer && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${t.transferDirection === 'to_savings' ? 'bg-[#FEEBC8] text-[#975A16]' : t.transferDirection === 'to_investable' ? 'bg-blue-50 text-blue-600' : 'bg-red-50 text-red-600'}`}>{t.transferDirection === 'to_savings' ? '投資➔存款' : t.transferDirection === 'to_investable' ? '存款➔投資' : t.transferDirection === 'invest_to_emergency' ? '投資➔預備金' : t.transferDirection === 'asset_swap' ? `${t.fromAsset || '?'}➔${t.asset || '?'}` : '存款➔預備金'}</span>}
                                 </div>
                                 <p className="text-xs text-gray-400 truncate mt-0.5">{t.date} • {t.note || '無備註'}</p>
                             </div>
@@ -1829,13 +1939,16 @@ export default function App() {
     if (total <= 0) return null;
 
     // 1. 實際曝險（把槓桿算進去）
-    const exposureTotal = items.reduce((s, i) => s + i.value * i.leverage, 0);
+    // 現金不是市場曝險，所以不算進曝險，只算進淨值
+    const exposureTotal = items.filter(i => i.kind !== 'cash').reduce((s, i) => s + i.value * i.leverage, 0);
+    const cashValue = items.filter(i => i.kind === 'cash').reduce((s, i) => s + i.value, 0);
     const exposureByKind = (['crypto', 'equity', 'other'] as AssetKind[])
       .map(k => ({ kind: k, value: items.filter(i => i.kind === k).reduce((s, i) => s + i.value * i.leverage, 0) }))
       .filter(k => k.value > 0);
 
     // 2. 風險貢獻
-    const risk = computeRisk(items, market, riskWindow);
+    const cashNames = new Set(assets.filter(a => a.kind === 'cash').map(a => a.name));
+    const risk = computeRisk(items, market, riskWindow, cashNames);
     const hasRiskData = risk.contributions.length > 0;
     const cryptoNames = new Set(assets.filter(a => a.kind === 'crypto').map(a => a.name));
     const cryptoRisk = risk.contributions.filter(c => cryptoNames.has(c.name)).reduce((s, c) => s + c.risk, 0);
@@ -1862,9 +1975,13 @@ export default function App() {
           </div>
           <div className="flex flex-wrap gap-2">
             {exposureByKind.map(k => (
-              <span key={k.kind} className="text-[11px] font-bold bg-gray-100 text-gray-700 px-2 py-1 rounded-lg">{ASSET_KIND_LABEL[k.kind]} {pct(k.value / exposureTotal)}</span>
+              <span key={k.kind} className="text-[11px] font-bold bg-gray-100 text-gray-700 px-2 py-1 rounded-lg">{ASSET_KIND_LABEL[k.kind]} {exposureTotal > 0 ? pct(k.value / exposureTotal) : '0%'}</span>
             ))}
           </div>
+          <p className="text-[11px] text-gray-500 mt-2">
+            曝險是淨值的 <b>{(exposureTotal / total).toFixed(2)} 倍</b>
+            {cashValue > 0 && <>，其中投資現金 ${formatMoney(cashValue)}（{pct(cashValue / total)}）不承擔市場風險</>}。
+          </p>
         </div>
 
         <div className="mb-5 pt-4 border-t border-gray-100">
@@ -2099,18 +2216,22 @@ export default function App() {
                             <select value={a.kind} onChange={e => updateAsset(a.name, { kind: e.target.value as AssetKind })} className="text-[11px] font-medium text-gray-500 bg-gray-50 rounded-md px-1.5 py-0.5 outline-none">
                                 <option value="crypto">加密貨幣</option>
                                 <option value="equity">股票/ETF</option>
+                                <option value="cash">投資現金</option>
                                 <option value="other">其他</option>
                             </select>
-                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${market.prices[a.name] !== undefined ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-400'}`}>{market.prices[a.name] !== undefined ? `$${formatMoney(market.prices[a.name])}` : '無價格資料'}</span>
+                            {a.kind === 'cash'
+                                ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-green-50 text-green-700">價格固定 1</span>
+                                : <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${market.prices[a.name] !== undefined ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-400'}`}>{market.prices[a.name] !== undefined ? `$${formatMoney(market.prices[a.name])}` : '無價格資料'}</span>}
                             <button onClick={() => handleRemoveAsset(a.name)} className="ml-auto w-6 h-6 rounded-full bg-gray-100 text-gray-400 flex items-center justify-center hover:bg-red-500 hover:text-white transition"><X className="w-3 h-3" /></button>
                         </div>
-                        <div className="grid grid-cols-3 gap-2">
+                        <div className={`grid gap-2 ${a.kind === 'cash' ? 'grid-cols-1' : 'grid-cols-3'}`}>
                             <label className="bg-gray-50 rounded-lg px-2 py-1.5">
-                                <span className="block text-[9px] text-gray-400 font-bold">持有數量</span>
+                                <span className="block text-[9px] text-gray-400 font-bold">{a.kind === 'cash' ? '目前金額（台幣）' : '持有數量'}</span>
                                 <input type="text" inputMode="decimal" placeholder="0" className="w-full text-sm font-bold bg-transparent outline-none"
                                     value={qtyDrafts[a.name] ?? (a.baseQuantity ? String(a.baseQuantity) : '')}
                                     onChange={e => { const v = e.target.value; if (/^\d*\.?\d*$/.test(v)) { setQtyDrafts(prev => ({ ...prev, [a.name]: v })); updateAsset(a.name, { baseQuantity: Number(v) || 0 }); } }} />
                             </label>
+                            {a.kind !== 'cash' && <>
                             <label className="bg-gray-50 rounded-lg px-2 py-1.5">
                                 <span className="block text-[9px] text-gray-400 font-bold">槓桿倍數</span>
                                 <input type="text" inputMode="numeric" placeholder="1" className="w-full text-sm font-bold bg-transparent outline-none"
@@ -2123,6 +2244,7 @@ export default function App() {
                                     value={a.baseline || ''}
                                     onChange={e => { if (/^\d*$/.test(e.target.value)) updateAsset(a.name, { baseline: e.target.value === '' ? 0 : Number(e.target.value) }); }} />
                             </label>
+                            </>}
                         </div>
                     </div>
                 ))}
@@ -2131,6 +2253,7 @@ export default function App() {
                     <select value={newAssetKind} onChange={e => setNewAssetKind(e.target.value as AssetKind)} className="bg-gray-50 border border-gray-200 rounded-xl px-2 py-2 text-sm font-medium outline-none">
                         <option value="crypto">幣</option>
                         <option value="equity">股</option>
+                        <option value="cash">現金</option>
                         <option value="other">其他</option>
                     </select>
                     <button onClick={handleAddAsset} disabled={!newAssetName.trim()} className="bg-black text-white px-3 py-2 rounded-xl font-bold text-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center"><Plus className="w-4 h-4" /></button>
@@ -2207,11 +2330,18 @@ export default function App() {
                 </div>
             </CardContainer>
 
+            <div className="grid grid-cols-2 gap-2 mb-2">
+                <div onClick={handleExportBackup} className="bg-black text-white rounded-2xl p-4 flex items-center justify-center gap-2 cursor-pointer active:opacity-80 transition"><Download className="w-5 h-5" /><span className="text-sm font-bold">匯出完整備份</span></div>
+                <div onClick={() => importInputRef.current && importInputRef.current.click()} className="bg-white rounded-2xl p-4 border border-gray-200 flex items-center justify-center gap-2 cursor-pointer active:bg-gray-50 transition"><RefreshCcw className="w-5 h-5 text-black" /><span className="text-sm font-bold text-black">匯入備份</span></div>
+            </div>
+            <input ref={importInputRef} type="file" accept=".json,application/json" onChange={handleImportBackup} className="hidden" />
+            {backupMessage && <p className={`text-xs font-bold mb-2 ml-2 ${backupMessage.ok ? 'text-green-600' : 'text-red-500'}`}>{backupMessage.text}</p>}
             <div onClick={handleExport} className="bg-white rounded-2xl p-4 shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 flex items-center justify-center gap-2 cursor-pointer active:bg-gray-50 transition-colors"><Download className="w-5 h-5 text-black" /><span className="text-base font-bold text-black">匯出交易紀錄 (Excel/CSV)</span></div>
+            <p className="text-xs text-gray-400 mt-2 ml-2 leading-relaxed">完整備份是 .json 檔，包含所有紀錄與設定，可以用「匯入備份」還原。CSV 只適合用 Excel 查看，無法匯入。</p>
         </div>
 
         <div className="pt-6"><h4 className="text-xs font-bold text-red-500 uppercase tracking-wide mb-2 ml-2">危險區域</h4><div onClick={() => setResetModal(true)} className="bg-red-50 rounded-2xl p-4 border border-red-100 flex items-center justify-center gap-2 cursor-pointer active:bg-red-100 transition-colors"><AlertTriangle className="w-5 h-5 text-red-500" /><span className="text-base font-bold text-red-600">初始化</span></div></div>
-        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v9.3 (Minimalist Core)</p></div>
+        <div className="py-4 text-center"><p className="text-xs font-medium text-gray-300">臨界財富 v9.4 (Minimalist Core)</p></div>
         </div>
     );
   };
