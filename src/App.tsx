@@ -13,7 +13,7 @@ interface Transaction {
   date: string;
   category: string;
   amount: number;
-  type: 'income' | 'expense' | 'transfer';
+  type: 'income' | 'expense' | 'transfer' | 'adjust';
   tag: TxTag;
   note: string;
   groupId?: string;
@@ -24,6 +24,7 @@ interface Transaction {
   isReimbursement?: boolean;   // 代墊還款
   asset?: string;              // 投資標的 / 變現標的
   quantity?: number;           // 買到 / 賣出的數量（選填）
+  adjustTarget?: 'emergency' | 'savings' | 'cumulative'; // 餘額校正的對象（金額可為負）
   transferDirection?: 'to_savings' | 'to_investable' | 'invest_to_emergency' | 'savings_to_emergency';
 }
 
@@ -88,6 +89,9 @@ interface MonthlyData {
   liquidatedByAsset: { [key: string]: number };
   qtyBoughtByAsset: { [key: string]: number };
   qtySoldByAsset: { [key: string]: number };
+  adjustEmergency: number;
+  adjustSavings: number;
+  adjustCumulative: number;
 }
 
 interface ProcessedMonthData extends MonthlyData {
@@ -109,6 +113,7 @@ interface ProcessedMonthData extends MonthlyData {
   advanceOutstanding: number;
   assetTotals: { [key: string]: number };
   assetQty: { [key: string]: number };
+  carryToNext: number; // 本月結餘中，保留到下個月的投資額度（90%）
 }
 
 // --- 色彩配置 (Critical Wealth Theme) ---
@@ -392,6 +397,8 @@ export default function App() {
   const [newAssetName, setNewAssetName] = useState('');
   const [newAssetKind, setNewAssetKind] = useState<AssetKind>('crypto');
   const [qtyDrafts, setQtyDrafts] = useState<{ [key: string]: string }>({});
+  const [reconcileActual, setReconcileActual] = useState('');
+  const [reconcileTarget, setReconcileTarget] = useState<'emergency' | 'savings' | 'cumulative'>('emergency');
 
   const availableMonths = useMemo(() => {
     const months = new Set(transactions.map(t => t.date.substring(0, 7)));
@@ -463,7 +470,7 @@ export default function App() {
     csvRows.push(headers.join(','));
 
     transactions.forEach(t => {
-        let typeLabel = t.type === 'income' ? '收入' : t.type === 'transfer' ? '劃轉' : '支出';
+        let typeLabel = t.type === 'income' ? '收入' : t.type === 'transfer' ? '劃轉' : t.type === 'adjust' ? '校正' : '支出';
         let specialLabel = '一般月收支';
         
         if (t.type === 'transfer') {
@@ -477,6 +484,7 @@ export default function App() {
         else if (t.fromEmergency) specialLabel = '預備金支付';
         else if (t.isAssetLiquidation) specialLabel = '資產變現';
         else if (t.isReimbursement) specialLabel = '代墊還款';
+        else if (t.type === 'adjust') specialLabel = `校正-${t.adjustTarget === 'savings' ? '現金存款' : t.adjustTarget === 'cumulative' ? '歷史可加碼' : '預備金'}`;
 
         const row = [
             t.id, t.date, typeLabel, t.category, t.amount, t.tag,
@@ -569,7 +577,8 @@ export default function App() {
         transferToSavingsFromMonthly: 0, transferToSavingsFromCumulative: 0, transferToInvestable: 0, 
         transferInvestToEmergencyFromMonthly: 0, transferInvestToEmergencyFromCumulative: 0, transferSavingsToEmergency: 0,
         need: 0, want: 0, advance: 0, categoryMap: {}, investedByAsset: {}, liquidatedByAsset: {},
-        qtyBoughtByAsset: {}, qtySoldByAsset: {}
+        qtyBoughtByAsset: {}, qtySoldByAsset: {},
+        adjustEmergency: 0, adjustSavings: 0, adjustCumulative: 0
     });
 
     availableMonths.forEach(m => { monthlyRawData[m] = initMonthObj(); });
@@ -581,7 +590,11 @@ export default function App() {
       
       const amount = Number(t.amount);
       
-      if (t.type === 'transfer') {
+      if (t.type === 'adjust') {
+          if (t.adjustTarget === 'savings') m.adjustSavings += amount;
+          else if (t.adjustTarget === 'cumulative') m.adjustCumulative += amount;
+          else m.adjustEmergency += amount;
+      } else if (t.type === 'transfer') {
           if (t.transferDirection === 'to_savings') {
               if (t.investSource === 'monthly') m.transferToSavingsFromMonthly += amount;
               else m.transferToSavingsFromCumulative += amount;
@@ -683,9 +696,11 @@ export default function App() {
       
       let monthlyMaxInvestable = carryOverBudget; 
       let currentMonthMonthlyRemaining = monthlyMaxInvestable;
-      let currentMonthCumulativeRemaining = cumulativeInvestable;
+      let currentMonthCumulativeRemaining = cumulativeInvestable + data.adjustCumulative;
       
       runningEmergencyFund -= data.emergencyExpense;
+      runningEmergencyFund += data.adjustEmergency;
+      cumulativeSavings += data.adjustSavings;
       cumulativeSavings = cumulativeSavings + data.assetLiquidation - data.savingsExpense;
       
       currentMonthMonthlyRemaining -= data.investedFromMonthly;
@@ -782,6 +797,7 @@ export default function App() {
           emergencyFund: runningEmergencyFund,
           divertedToEmergency,
           repaidDeficit,
+          carryToNext: surplusForNextMonth,
           emergencyGoal,
           avgNeed,
           needSampleMonths: sampleMonths,
@@ -819,6 +835,7 @@ export default function App() {
                 advanceOutstanding: 0,
                 assetTotals: { ...initialAssetTotals },
                 assetQty: { ...initialAssetQty },
+                carryToNext: 0,
             };
         }
 
@@ -843,6 +860,7 @@ export default function App() {
             advanceOutstanding: runningAdvance,
             assetTotals: { ...assetTotals },
             assetQty: { ...assetQty },
+            carryToNext: 0,
         };
     };
 
@@ -869,6 +887,7 @@ export default function App() {
 
   const openEditMode = (trans: Transaction) => {
     if (swipedId === trans.id) return; 
+    if (trans.type === 'adjust') { setDeleteModal({ show: true, id: trans.id }); return; } // 校正紀錄只能刪除
     setEditingId(trans.id);
     const source = trans.category === '投資' ? (trans.tag === 'invest_cumulative' ? 'cumulative' : 'monthly') : (trans.type === 'transfer' ? (trans.investSource || 'cumulative') : 'monthly');
     setFormData({ 
@@ -1676,6 +1695,7 @@ export default function App() {
             <div className="bg-white rounded-2xl overflow-hidden shadow-[0_2px_8px_rgba(0,0,0,0.04)] border border-gray-100 divide-y divide-gray-50">
               {(groupItems as Transaction[]).map(t => {
                 const isTransfer = t.type === 'transfer';
+                const isAdjust = t.type === 'adjust';
                 return (
                 <div key={t.id} className="relative overflow-hidden" onTouchStart={(e) => handleTouchStart(e, t.id)} onTouchMove={(e) => handleTouchMove(e, t.id)} onTouchEnd={handleTouchEnd}>
                     <div className="absolute inset-y-0 right-0 w-24 bg-[#FF3B30] flex items-center justify-center z-0" onClick={(e) => requestDelete(e, t.id)}><Trash2 className="w-6 h-6 text-white" /></div>
@@ -1693,6 +1713,7 @@ export default function App() {
                                     {t.fromEmergency && <span className="bg-red-100 text-red-600 text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><ShieldAlert className="w-2.5 h-2.5" /> 預備金</span>}
                                     {t.isAssetLiquidation && <span className="bg-[#E6FFFA] text-[#2C7A7B] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><RefreshCcw className="w-2.5 h-2.5" /> 變現{t.asset ? ` ${t.asset}` : ''}</span>}
                                     {t.isReimbursement && <span className="bg-[#EEF0FF] text-[#5856D6] text-[9px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><Tag className="w-2.5 h-2.5" /> 代墊還款</span>}
+                                    {isAdjust && <span className="bg-yellow-50 text-yellow-700 text-[9px] font-bold px-1.5 py-0.5 rounded-md">{t.adjustTarget === 'savings' ? '現金存款' : t.adjustTarget === 'cumulative' ? '歷史可加碼' : '預備金'}</span>}
                                     {isTransfer && <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-md ${t.transferDirection === 'to_savings' ? 'bg-[#FEEBC8] text-[#975A16]' : t.transferDirection === 'to_investable' ? 'bg-blue-50 text-blue-600' : 'bg-red-50 text-red-600'}`}>{t.transferDirection === 'to_savings' ? '投資➔存款' : t.transferDirection === 'to_investable' ? '存款➔投資' : t.transferDirection === 'invest_to_emergency' ? '投資➔預備金' : '存款➔預備金'}</span>}
                                 </div>
                                 <p className="text-xs text-gray-400 truncate mt-0.5">{t.date} • {t.note || '無備註'}</p>
@@ -1700,7 +1721,7 @@ export default function App() {
                         </div>
                         <div className="text-right">
                             <p className={`font-bold text-base ${t.type === 'income' ? 'text-[#34C759]' : isTransfer ? 'text-[#5AC8FA]' : 'text-black'}`}>
-                                {t.type === 'income' ? '+' : isTransfer ? '⇌' : '-'}{formatMoney(t.amount)}
+                                {isAdjust ? (t.amount >= 0 ? '+' : '−') : t.type === 'income' ? '+' : isTransfer ? '⇌' : '-'}{formatMoney(isAdjust ? Math.abs(t.amount) : t.amount)}
                             </p>
                             {t.category !== '投資' && t.type === 'expense' && (
                                 <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${t.tag === 'need' ? 'bg-gray-100 text-gray-500' : t.tag === 'advance' ? 'bg-[#EEF0FF] text-[#5856D6]' : 'bg-[#FFF5F7] text-[#D53F8C]'}`}>{tagLabel(t.tag)}</span>
@@ -1944,6 +1965,71 @@ export default function App() {
     </div>
   );
 
+  const renderReconcileCard = () => {
+    const now = stats.getMonthStats(getLocalMonthString());
+    const monthly = now.monthlyRemainingInvestable;
+    const parts = [
+      { label: '緊急預備金', value: now.emergencyFund },
+      { label: '現金存款', value: now.savings },
+      { label: '歷史可加碼資金', value: now.cumulativeAddOnAvailable },
+      { label: '本月剩餘額度', value: monthly },
+      { label: '留到下月的額度', value: now.carryToNext },
+      { label: '未填補赤字', value: -now.accumulatedDeficit },
+    ].filter(p => Math.round(p.value) !== 0);
+    const appTotal = parts.reduce((s, p) => s + p.value, 0);
+    const actual = Number(reconcileActual);
+    const hasActual = reconcileActual !== '' && isFinite(actual);
+    const diff = hasActual ? Math.round(actual - appTotal) : 0;
+
+    const handleReconcile = () => {
+      if (!hasActual || diff === 0) return;
+      const baseId = transactions.length > 0 ? Math.max(...transactions.map(t => t.id)) + 1 : 1;
+      const item: Transaction = {
+        id: baseId, date: getLocalDayString(), category: '餘額校正', amount: diff, type: 'adjust', tag: 'transfer',
+        note: `實際 ${formatMoney(actual)}，APP ${formatMoney(appTotal)}`, adjustTarget: reconcileTarget,
+      };
+      setTransactions([item, ...transactions]);
+      setReconcileActual('');
+    };
+
+    return (
+      <CardContainer className="p-4">
+        <p className="text-[11px] text-gray-500 mb-3 leading-relaxed">把 APP 認為你手上有的現金，對齊到帳戶裡實際可動用的金額（扣掉待繳卡費、不含已經買成資產的錢）。差額會記成一筆校正紀錄，之後可以刪除。</p>
+        <div className="space-y-1.5 mb-3">
+          {parts.map(p => (
+            <div key={p.label} className="flex justify-between text-xs"><span className="text-gray-500">{p.label}</span><span className="font-bold tabular-nums">{p.value < 0 ? '−' : ''}${formatMoney(Math.abs(p.value))}</span></div>
+          ))}
+          <div className="flex justify-between text-sm pt-1.5 border-t border-gray-100"><span className="font-bold">APP 計算的現金合計</span><span className="font-bold tabular-nums">${formatMoney(appTotal)}</span></div>
+        </div>
+        <div className="flex items-center justify-between bg-gray-50 rounded-xl px-3 py-2 border border-gray-100 mb-3">
+          <span className="text-xs font-bold text-gray-600">實際可動用現金</span>
+          <input type="text" inputMode="numeric" placeholder="0" value={reconcileActual}
+            onChange={e => { if (/^\d*$/.test(e.target.value)) setReconcileActual(e.target.value); }}
+            className="text-right text-base font-bold bg-transparent outline-none w-32" />
+        </div>
+        {hasActual && (
+          <>
+            <div className="flex justify-between items-baseline mb-3">
+              <span className="text-xs text-gray-500">差額</span>
+              <span className={`text-lg font-bold tabular-nums ${diff < 0 ? 'text-[#E53E3E]' : diff > 0 ? 'text-[#34C759]' : 'text-black'}`}>{diff > 0 ? '+' : diff < 0 ? '−' : ''}${formatMoney(Math.abs(diff))}</span>
+            </div>
+            {diff !== 0 && (
+              <>
+                <p className="text-[10px] text-gray-400 mb-2">差額要調整到哪個部分？</p>
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  {([['emergency', '預備金'], ['savings', '現金存款'], ['cumulative', '歷史可加碼']] as const).map(([key, label]) => (
+                    <button key={key} onClick={() => setReconcileTarget(key)} className={`py-2 rounded-xl text-xs font-bold border transition ${reconcileTarget === key ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200'}`}>{label}</button>
+                  ))}
+                </div>
+                <button onClick={handleReconcile} className="w-full bg-black text-white py-3 rounded-xl font-bold text-sm">建立校正紀錄</button>
+              </>
+            )}
+          </>
+        )}
+      </CardContainer>
+    );
+  };
+
   const renderSettingsView = () => {
     const handleStatChange = (field: keyof StatsData, value: string) => { if (/^\d*$/.test(value)) setInitialStats(prev => ({...prev, [field]: value === '' ? 0 : Number(value)})); };
     const isAutoEmergency = initialStats.emergencyMode === 'auto';
@@ -2102,6 +2188,11 @@ export default function App() {
             </CardContainer>
         </div>
         
+        <div>
+            <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">餘額校正</h4>
+            {renderReconcileCard()}
+        </div>
+
         <div>
             <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wide mb-2 ml-2">資料管理</h4>
             <CardContainer className="p-4 mb-2">
