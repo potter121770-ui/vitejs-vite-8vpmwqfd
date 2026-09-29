@@ -1,7 +1,8 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart, ShieldAlert, Tag, ShoppingBag, Briefcase, Database } from 'lucide-react';
 import { 
-  ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip 
+  ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip,
+  LineChart, Line, XAxis, YAxis
 } from 'recharts';
 
 // --- Type Definitions ---
@@ -64,6 +65,16 @@ interface StatsData {
   stressCrypto?: number;          // 壓力測試：加密貨幣跌幅 (%)
   stressEquity?: number;          // 壓力測試：股票跌幅 (%)
   emergencyAutoFrom?: string;     // 自動預備金從哪個月份開始生效 (YYYY-MM)，之前的月份維持固定目標
+  combineCrypto?: boolean;        // 加密貨幣合併計算成本與損益（預設 true）
+  baseCosts?: { [unit: string]: { cost: number; date: string } }; // 各計算單位的起始成本與平均投入日期
+}
+
+interface NetWorthPoint {
+  month: string;   // YYYY-MM，同月份只保留最新一筆
+  date: string;    // 記錄日期
+  cash: number;    // APP 計算的現金（預備金、存款、未投資額度…）
+  invest: number;  // 投資市值
+  total: number;
 }
 
 interface MonthlyData {
@@ -151,6 +162,8 @@ const INITIAL_STATS_DATA: StatsData = {
   priceCsvUrl: '',
   stressCrypto: 70,
   stressEquity: 35,
+  combineCrypto: true,
+  baseCosts: {},
 };
 
 const DEFAULT_EXPENSE_CATEGORIES = [
@@ -254,6 +267,26 @@ const computeRisk = (items: { name: string; value: number }[], market: MarketDat
   const variance = w.reduce((s, wi, i) => s + wi * covW[i], 0);
   const contributions = usable.map((a, i) => ({ name: a.name, weight: w[i], vol: vol[i], risk: variance > 0 ? (w[i] * covW[i]) / variance : 0 }));
   return { portfolioVol: Math.sqrt(Math.max(variance, 0)), contributions, missing, missingCorr };
+};
+
+// 年化報酬率（XIRR）：考慮每筆現金流的日期。flows 中投入為負、取回與期末市值為正
+const xirr = (flows: { date: string; amount: number }[]): number | null => {
+  const valid = flows.filter(f => f.amount !== 0 && !isNaN(Date.parse(f.date)));
+  if (valid.length < 2 || !valid.some(f => f.amount > 0) || !valid.some(f => f.amount < 0)) return null;
+  const t0 = Math.min(...valid.map(f => Date.parse(f.date)));
+  const years = valid.map(f => (Date.parse(f.date) - t0) / (365 * 86400000));
+  if (Math.max(...years) < 90 / 365) return null; // 期間太短，年化沒有意義
+  const npv = (r: number) => valid.reduce((s, f, i) => s + f.amount / Math.pow(1 + r, years[i]), 0);
+  let lo = -0.99, hi = 10;
+  let fLo = npv(lo), fHi = npv(hi);
+  if (fLo * fHi > 0) return null;
+  for (let i = 0; i < 200; i++) {
+    const mid = (lo + hi) / 2;
+    const fMid = npv(mid);
+    if (Math.abs(fMid) < 1e-6) return mid;
+    if (fLo * fMid < 0) { hi = mid; fHi = fMid; } else { lo = mid; fLo = fMid; }
+  }
+  return (lo + hi) / 2;
 };
 
 const tagLabel = (tag: TxTag) => tag === 'need' ? '需要' : tag === 'want' ? '想要' : tag === 'advance' ? '代墊' : '';
@@ -364,6 +397,12 @@ export default function App() {
       return saved ? { ...EMPTY_MARKET, ...JSON.parse(saved) } : EMPTY_MARKET;
     } catch (e) { return EMPTY_MARKET; }
   });
+  const [netWorth, setNetWorth] = useState<NetWorthPoint[]>(() => {
+    try {
+      const saved = localStorage.getItem('yupao_networth_v1');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) { return []; }
+  });
   const [marketStatus, setMarketStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const [marketError, setMarketError] = useState('');
   const [riskWindow, setRiskWindow] = useState<'long' | 'short'>('long');
@@ -376,6 +415,7 @@ export default function App() {
   useEffect(() => { localStorage.setItem('yupao_categories_v4', JSON.stringify(expenseCategories)); }, [expenseCategories]);
   useEffect(() => { localStorage.setItem('yupao_assets_v4', JSON.stringify(assets)); }, [assets]);
   useEffect(() => { localStorage.setItem('yupao_market_v1', JSON.stringify(market)); }, [market]);
+  useEffect(() => { localStorage.setItem('yupao_networth_v1', JSON.stringify(netWorth)); }, [netWorth]);
 
   const refreshMarket = async () => {
     const url = (initialStats.priceCsvUrl || '').trim();
@@ -552,7 +592,7 @@ export default function App() {
   const handleExportBackup = () => {
     const payload = {
       app: 'critical-wealth', version: 1, exportedAt: new Date().toISOString(),
-      transactions, initialStats, budgets, expenseCategories, assets, market,
+      transactions, initialStats, budgets, expenseCategories, assets, market, netWorth,
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -582,6 +622,7 @@ export default function App() {
         if (Array.isArray(data.expenseCategories)) setExpenseCategories(data.expenseCategories);
         if (Array.isArray(data.assets)) setAssets(data.assets);
         if (data.market) setMarket({ ...EMPTY_MARKET, ...data.market });
+        if (Array.isArray(data.netWorth)) setNetWorth(data.netWorth);
         setBackupMessage({ ok: true, text: `已匯入 ${data.transactions.length} 筆紀錄` });
       } catch (err: any) {
         setBackupMessage({ ok: false, text: `匯入失敗：${err?.message || '檔案格式不正確'}（請選擇 .json 備份檔，CSV 無法匯入）` });
@@ -597,6 +638,7 @@ export default function App() {
       localStorage.removeItem('yupao_categories_v4'); 
       localStorage.removeItem('yupao_assets_v4');
       localStorage.removeItem('yupao_market_v1');
+      localStorage.removeItem('yupao_networth_v1');
       window.location.reload();
   };
 
@@ -964,6 +1006,152 @@ export default function App() {
 
     return { dashboard: { ...currentData, pieData }, investment: currentData, getMonthStats };
   }, [transactions, initialStats, selectedMonth, availableMonths, assets]);
+
+  // ================= 投資損益與淨資產 =================
+  const CRYPTO_UNIT = '加密貨幣';
+
+  // 計算單位：加密貨幣合併時，所有加密貨幣共用一個成本；其他標的各自計算
+  const unitOf = (assetName: string) => {
+    const a = assets.find(x => x.name === assetName);
+    if (a && a.kind === 'crypto' && initialStats.combineCrypto !== false) return CRYPTO_UNIT;
+    return assetName;
+  };
+
+  // APP 認為你手上的現金（和餘額校正卡片的算法一致）
+  const getAppCashTotal = (d: ProcessedMonthData) =>
+    d.emergencyFund + d.savings + d.cumulativeAddOnAvailable + d.monthlyRemainingInvestable + (d.carryToNext || 0) - d.accumulatedDeficit;
+
+  const computeLedger = () => {
+    const today = getLocalDayString();
+    const nowStats = stats.getMonthStats(getLocalMonthString());
+    const { values } = getAssetValues(nowStats.assetTotals, nowStats.assetQty);
+    const baseCosts = initialStats.baseCosts || {};
+    const isCash = (n: string) => assets.some(a => a.name === n && a.kind === 'cash');
+    const known = (n?: string) => !!n && assets.some(a => a.name === n);
+
+    const unitKeys: string[] = [];
+    assets.forEach(a => { const u = unitOf(a.name); if (!unitKeys.includes(u)) unitKeys.push(u); });
+    const unitValue: { [u: string]: number } = {};
+    unitKeys.forEach(u => { unitValue[u] = 0; });
+    assets.forEach(a => { unitValue[unitOf(a.name)] += values[a.name] || 0; });
+
+    const pastTx = transactions.filter(t => t.date <= today);
+    const earliest = pastTx.reduce((m, t) => (t.date < m ? t.date : m), today);
+    const cost: { [u: string]: number } = {};
+    const realized: { [u: string]: number } = {};
+    const flows: { [u: string]: { date: string; amount: number }[] } = {};
+    unitKeys.forEach(u => {
+      const cashAsset = assets.find(a => a.name === u && a.kind === 'cash');
+      const base = baseCosts[u];
+      const c = base && base.cost ? base.cost : cashAsset ? (cashAsset.baseQuantity || 0) : 0;
+      cost[u] = c; realized[u] = 0; flows[u] = [];
+      if (c > 0) flows[u].push({ date: (base && base.date) || earliest, amount: -c });
+    });
+
+    const qty: { [a: string]: number } = {};
+    assets.forEach(a => { qty[a.name] = a.baseQuantity || 0; });
+
+    // 被移出的部位佔該標的的比例：優先用數量，其次用目前市值估算
+    const fractionOf = (assetName: string, amount: number, q?: number) => {
+      let frac: number;
+      if (isCash(assetName)) frac = qty[assetName] > 0 ? amount / qty[assetName] : 1;
+      else if (q && qty[assetName] > 0) frac = q / qty[assetName];
+      else frac = (values[assetName] || 0) > 0 ? amount / values[assetName] : 1;
+      return Math.min(1, Math.max(0, frac));
+    };
+    // 平均成本法：依比例扣除成本；合併單位內依目前市值分攤
+    const takeCost = (assetName: string, frac: number) => {
+      const u = unitOf(assetName);
+      const members = assets.filter(a => unitOf(a.name) === u);
+      const share = members.length <= 1 ? 1 : unitValue[u] > 0 ? (values[assetName] || 0) / unitValue[u] : 1 / members.length;
+      const removed = cost[u] * share * frac;
+      cost[u] -= removed;
+      return removed;
+    };
+
+    let untagged = 0;
+    [...pastTx].sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id).forEach(t => {
+      if (t.type === 'expense' && t.category === '投資') {
+        if (!known(t.asset)) { untagged++; return; }
+        const u = unitOf(t.asset!);
+        cost[u] += t.amount;
+        flows[u].push({ date: t.date, amount: -t.amount });
+        qty[t.asset!] = (qty[t.asset!] || 0) + (t.quantity || 0);
+      } else if (t.type === 'income' && t.isAssetLiquidation && known(t.asset)) {
+        const a = t.asset!;
+        const removed = takeCost(a, fractionOf(a, t.amount, t.quantity));
+        const u = unitOf(a);
+        realized[u] += t.amount - removed;
+        flows[u].push({ date: t.date, amount: t.amount });
+        qty[a] = Math.max(0, (qty[a] || 0) - (t.quantity || (isCash(a) ? t.amount : 0)));
+      } else if (t.type === 'transfer' && t.transferDirection === 'asset_swap' && known(t.asset) && known(t.fromAsset)) {
+        const from = t.fromAsset!, to = t.asset!;
+        const uFrom = unitOf(from), uTo = unitOf(to);
+        const frac = fractionOf(from, t.amount, t.fromQuantity);
+        if (uFrom !== uTo) {
+          // 成本跟著轉過去：不會因為轉換就產生或洗掉損益
+          const moved = takeCost(from, frac);
+          cost[uTo] += moved;
+          flows[uFrom].push({ date: t.date, amount: t.amount });
+          flows[uTo].push({ date: t.date, amount: -t.amount });
+        }
+        qty[from] = Math.max(0, (qty[from] || 0) - (t.fromQuantity || (isCash(from) ? t.amount : 0)));
+        qty[to] = (qty[to] || 0) + (t.quantity || (isCash(to) ? t.amount : 0));
+      }
+    });
+
+    const rows = unitKeys.map(u => {
+      const value = unitValue[u];
+      const c = cost[u];
+      const unitIsCash = assets.some(a => a.name === u && a.kind === 'cash');
+      return {
+        unit: u,
+        isCash: unitIsCash,
+        cost: c,
+        value,
+        unrealized: value - c,
+        pct: c > 0 ? (value - c) / c : null,
+        realized: realized[u],
+        xirr: xirr([...flows[u], { date: today, amount: value }]),
+        missingCost: !unitIsCash && value > 0 && !(baseCosts[u] && baseCosts[u].cost) && flows[u].length === 0,
+      };
+    }).filter(r => r.value > 0 || r.cost > 0 || r.realized !== 0);
+
+    const allFlows = unitKeys.flatMap(u => flows[u]);
+    const totalValue = rows.reduce((s, r) => s + r.value, 0);
+    const totalCost = rows.reduce((s, r) => s + r.cost, 0);
+    return {
+      rows,
+      totalValue,
+      totalCost,
+      totalUnrealized: totalValue - totalCost,
+      totalRealized: rows.reduce((s, r) => s + r.realized, 0),
+      portfolioXirr: xirr([...allFlows, { date: today, amount: totalValue }]),
+      untagged,
+      unitKeys,
+    };
+  };
+
+  // 每次成功更新價格時，記錄一個淨資產點（同月份只保留最新一筆）
+  const lastRecordedFetch = useRef(market.fetchedAt);
+  useEffect(() => {
+    if (!market.fetchedAt || market.fetchedAt === lastRecordedFetch.current) return;
+    lastRecordedFetch.current = market.fetchedAt;
+    const month = getLocalMonthString();
+    const nowStats = stats.getMonthStats(month);
+    const { values } = getAssetValues(nowStats.assetTotals, nowStats.assetQty);
+    const invest = assets.reduce((s, a) => s + (values[a.name] || 0), 0);
+    const cash = getAppCashTotal(nowStats);
+    const point: NetWorthPoint = { month, date: getLocalDayString(), cash: Math.round(cash), invest: Math.round(invest), total: Math.round(cash + invest) };
+    setNetWorth(prev => [...prev.filter(p => p.month !== month), point].sort((a, b) => a.month.localeCompare(b.month)));
+  }, [market.fetchedAt]);
+
+  const updateBaseCost = (unit: string, patch: Partial<{ cost: number; date: string }>) => {
+    setInitialStats(prev => {
+      const current = (prev.baseCosts || {})[unit] || { cost: 0, date: '' };
+      return { ...prev, baseCosts: { ...(prev.baseCosts || {}), [unit]: { ...current, ...patch } } };
+    });
+  };
 
   const openAddMode = () => {
     setEditingId(null);
@@ -2070,6 +2258,120 @@ export default function App() {
     );
   };
 
+  const signed = (v: number) => `${v >= 0 ? '+' : '−'}$${formatMoney(Math.abs(v))}`;
+  const pnlColor = (v: number) => (Math.round(v) === 0 ? 'text-gray-500' : v > 0 ? 'text-green-600' : 'text-red-500');
+  const pctText = (v: number | null) => (v === null ? '' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`);
+
+  const renderPnlCard = () => {
+    const ledger = computeLedger();
+    if (ledger.rows.length === 0) return null;
+    return (
+      <div>
+        <div className="flex items-center justify-between px-4 mb-1.5">
+          <span className="text-sm text-gray-500">投資損益</span>
+          <button onClick={() => { setSettingsPage('costs'); setActiveTab('settings'); }} className="text-sm font-bold" style={{ color: THEME.accentGold }}>設定成本</button>
+        </div>
+        <CardContainer className="divide-y divide-gray-100">
+          {ledger.rows.filter(r => !r.isCash).map(r => (
+            <div key={r.unit} className="px-4 py-3">
+              <div className="flex justify-between items-baseline">
+                <span className="text-base text-black">{r.unit}</span>
+                <span className={`text-base font-bold tabular-nums ${pnlColor(r.unrealized)}`}>{signed(r.unrealized)}</span>
+              </div>
+              <div className="flex justify-between items-baseline mt-0.5">
+                <span className="text-sm text-gray-500 tabular-nums">成本 ${formatMoney(r.cost)}・市值 ${formatMoney(r.value)}</span>
+                <span className={`text-sm tabular-nums ${pnlColor(r.unrealized)}`}>{pctText(r.pct)}</span>
+              </div>
+              {(Math.round(r.realized) !== 0 || r.xirr !== null) && (
+                <p className="text-sm text-gray-500 mt-0.5">
+                  {Math.round(r.realized) !== 0 && <>已實現 <span className={pnlColor(r.realized)}>{signed(r.realized)}</span></>}
+                  {Math.round(r.realized) !== 0 && r.xirr !== null && '・'}
+                  {r.xirr !== null && <>年化 {pctText(r.xirr)}</>}
+                </p>
+              )}
+              {r.missingCost && <p className="text-sm text-red-500 mt-0.5">尚未設定成本，損益不正確</p>}
+            </div>
+          ))}
+          <div className="px-4 py-3">
+            <div className="flex justify-between items-baseline">
+              <span className="text-base font-bold text-black">合計（未實現）</span>
+              <span className={`text-xl font-bold tabular-nums ${pnlColor(ledger.totalUnrealized)}`}>{signed(ledger.totalUnrealized)}</span>
+            </div>
+            <div className="flex justify-between items-baseline mt-0.5">
+              <span className="text-sm text-gray-500 tabular-nums">成本 ${formatMoney(ledger.totalCost)}・市值 ${formatMoney(ledger.totalValue)}</span>
+              <span className="text-sm text-gray-500">{ledger.portfolioXirr !== null ? `年化 ${pctText(ledger.portfolioXirr)}` : ''}</span>
+            </div>
+            {Math.round(ledger.totalRealized) !== 0 && <p className="text-sm text-gray-500 mt-0.5">已實現合計 <span className={pnlColor(ledger.totalRealized)}>{signed(ledger.totalRealized)}</span></p>}
+          </div>
+        </CardContainer>
+        <p className="text-sm text-gray-500 px-4 mt-1.5 leading-relaxed">
+          市值依上次更新的價格計算，成本採平均成本法。年化報酬（XIRR）考慮每筆投入的時間，期間少於三個月不顯示。
+          {ledger.untagged > 0 && ` 有 ${ledger.untagged} 筆投資沒有標記標的，不列入計算（若已含在起始成本中，這是正常的）。`}
+        </p>
+      </div>
+    );
+  };
+
+  const renderNetWorthCard = () => {
+    const nowStats = stats.getMonthStats(getLocalMonthString());
+    const { values } = getAssetValues(nowStats.assetTotals, nowStats.assetQty);
+    const investNow = assets.reduce((s, a) => s + (values[a.name] || 0), 0);
+    const cashNow = getAppCashTotal(nowStats);
+    const totalNow = cashNow + investNow;
+    const last = netWorth[netWorth.length - 1];
+    const prev = netWorth.length >= 2 ? netWorth[netWorth.length - 2] : null;
+
+    // 上一期到這一期：淨資產變化拆成「存下的現金」、「新投入」與「市場漲跌」
+    let breakdown: { saved: number; invested: number; market: number } | null = null;
+    if (last && prev) {
+      const inRange = (d: string) => d > prev.date && d <= last.date;
+      const known = (n?: string) => !!n && assets.some(a => a.name === n);
+      const invested = transactions.filter(t => inRange(t.date) && t.type === 'expense' && t.category === '投資' && known(t.asset)).reduce((s, t) => s + t.amount, 0)
+        - transactions.filter(t => inRange(t.date) && t.type === 'income' && t.isAssetLiquidation && known(t.asset)).reduce((s, t) => s + t.amount, 0);
+      breakdown = { saved: last.cash - prev.cash, invested, market: last.invest - prev.invest - invested };
+    }
+
+    return (
+      <div>
+        <SectionHeader>淨資產</SectionHeader>
+        <CardContainer className="p-4">
+          <div className="flex items-baseline justify-between">
+            <span className="text-3xl font-bold tracking-tight tabular-nums">${formatMoney(totalNow)}</span>
+            {last && prev && <span className={`text-sm font-bold tabular-nums ${pnlColor(last.total - prev.total)}`}>{signed(last.total - prev.total)} 較上期</span>}
+          </div>
+          <p className="text-sm text-gray-500 mt-1 tabular-nums">現金 ${formatMoney(cashNow)}・投資 ${formatMoney(investNow)}</p>
+
+          {netWorth.length >= 2 && (
+            <div className="h-40 mt-4 -mx-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={netWorth} margin={{ top: 5, right: 10, bottom: 0, left: 0 }}>
+                  <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#8E8E93' }} axisLine={false} tickLine={false} />
+                  <YAxis hide domain={['auto', 'auto']} />
+                  <RechartsTooltip formatter={(v: any) => `$${formatMoney(Number(v))}`} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                  <Line type="monotone" dataKey="total" name="淨資產" stroke={THEME.accentGold} strokeWidth={2.5} dot={{ r: 3 }} />
+                  <Line type="monotone" dataKey="cash" name="現金" stroke="#C7C7CC" strokeWidth={1.5} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {breakdown && (
+            <div className="mt-4 pt-3 border-t border-gray-100 space-y-1.5">
+              <p className="text-sm text-gray-500 mb-1">{prev!.month} ➔ {last!.month} 的變化來源</p>
+              <div className="flex justify-between text-base"><span>現金增減</span><span className={`tabular-nums ${pnlColor(breakdown.saved)}`}>{signed(breakdown.saved)}</span></div>
+              <div className="flex justify-between text-base"><span>新投入</span><span className="tabular-nums text-gray-600">{signed(breakdown.invested)}</span></div>
+              <div className="flex justify-between text-base"><span>市場漲跌</span><span className={`tabular-nums ${pnlColor(breakdown.market)}`}>{signed(breakdown.market)}</span></div>
+            </div>
+          )}
+        </CardContainer>
+        <p className="text-sm text-gray-500 px-4 mt-1.5 leading-relaxed">
+          {netWorth.length === 0 ? '每次按「更新價格」時會自動記錄一個點，每月一次就夠。' : `已記錄 ${netWorth.length} 個月。每月更新一次價格即可，同月份只保留最新一筆。`}
+          現金為 APP 計算的數字，月初做完餘額校正後最準確。
+        </p>
+      </div>
+    );
+  };
+
   const renderInvestmentView = () => (
     <div className="space-y-4 pb-4 pt-2">
       <div className="flex justify-start items-center px-1">
@@ -2115,6 +2417,8 @@ export default function App() {
       </div>
       {renderMarketBar()}
       {renderAllocationCard()}
+      {renderPnlCard()}
+      {renderNetWorthCard()}
       {renderRiskCard()}
       <div>
         <p className="text-sm text-gray-500 px-4 mb-1.5">現金存款（結餘的 10%）</p>
@@ -2213,7 +2517,7 @@ export default function App() {
 
     const PAGE_TITLES: { [key: string]: string } = {
       categories: '分類與預算', emergency: '緊急預備金', initial: '起始數值',
-      assets: '投資標的', market: '市場資料', risk: '風險規則',
+      assets: '投資標的', market: '市場資料', risk: '風險規則', costs: '成本與損益',
       reconcile: '餘額校正', backup: '備份與匯入',
     };
 
@@ -2356,6 +2660,44 @@ export default function App() {
             </div>
           );
 
+        case 'costs': {
+          const units: string[] = [];
+          assets.forEach(a => { if (a.kind === 'cash') return; const u = unitOf(a.name); if (!units.includes(u)) units.push(u); });
+          const combine = initialStats.combineCrypto !== false;
+          return (
+            <>
+              <div>
+                <CardContainer>
+                  <div className="px-4 py-3 flex items-center justify-between">
+                    <span className="text-base text-black">加密貨幣合併計算</span>
+                    <button onClick={() => setInitialStats(prev => ({ ...prev, combineCrypto: !combine }))} aria-label="切換加密貨幣合併計算"
+                      className={`w-12 h-7 rounded-full p-1 transition-colors ${combine ? 'bg-green-500' : 'bg-gray-200'}`}>
+                      <div className={`w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform ${combine ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                    </button>
+                  </div>
+                </CardContainer>
+                <SectionFooter>開啟時，所有加密貨幣共用一個成本，損益一起計算。交易所總入金金額適合用這個方式。</SectionFooter>
+              </div>
+              {units.map(u => {
+                const base = (initialStats.baseCosts || {})[u] || { cost: 0, date: '' };
+                return (
+                  <div key={u}>
+                    <SectionHeader>{u}</SectionHeader>
+                    <CardContainer className="divide-y divide-gray-100">
+                      <InputRow label="起始成本" value={base.cost || ''} onChange={v => { if (/^\d*$/.test(v)) updateBaseCost(u, { cost: Number(v) || 0 }); }} />
+                      <div className="px-4 py-3 flex items-center justify-between gap-4">
+                        <label className="text-base text-black">平均投入日期</label>
+                        <input type="date" value={base.date || ''} onChange={e => updateBaseCost(u, { date: e.target.value })} className="text-base text-right outline-none text-gray-600 bg-transparent" />
+                      </div>
+                    </CardContainer>
+                  </div>
+                );
+              })}
+              <SectionFooter>起始成本填「到目前為止」投入的總金額，包含已經記在 APP 裡、但沒有標記標的的投資。之後標記標的的投資會自動累加。平均投入日期用來計算年化報酬，填大概的中間日期即可。</SectionFooter>
+            </>
+          );
+        }
+
         case 'risk':
           return (
             <>
@@ -2456,6 +2798,7 @@ export default function App() {
             <CardContainer className="divide-y divide-gray-100">
               <NavRow label="投資標的" detail={`${assetCount} 個`} onClick={() => setSettingsPage('assets')} />
               <NavRow label="市場資料" detail={initialStats.priceCsvUrl ? '已連結' : '未設定'} onClick={() => setSettingsPage('market')} />
+              <NavRow label="成本與損益" detail={Object.values(initialStats.baseCosts || {}).filter(b => b.cost > 0).length > 0 ? '已設定' : '未設定'} onClick={() => setSettingsPage('costs')} />
               <NavRow label="風險規則" detail={initialStats.cryptoCap ? `上限 ${initialStats.cryptoCap}%` : undefined} onClick={() => setSettingsPage('risk')} />
             </CardContainer>
           </div>
@@ -2472,7 +2815,7 @@ export default function App() {
             <NavRow label="初始化所有資料" danger onClick={() => setResetModal(true)} />
           </CardContainer>
 
-          <p className="text-center text-xs text-gray-400">臨界財富 v10.0</p>
+          <p className="text-center text-xs text-gray-400">臨界財富 v10.1</p>
         </div>
     );
   };
