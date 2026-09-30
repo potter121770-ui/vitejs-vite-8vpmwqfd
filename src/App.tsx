@@ -22,6 +22,9 @@ interface Transaction {
   fromSavings?: boolean; 
   fromEmergency?: boolean; 
   isAssetLiquidation?: boolean; 
+  isLoanDisbursement?: boolean; // 學貸等借款撥款：進入現金存款，不算收入
+  isDebtRepayment?: boolean;    // 償還負債：算支出（現金流出），不算需要/想要
+  liability?: string;           // 對應的負債名稱
   isReimbursement?: boolean;   // 代墊還款
   asset?: string;              // 投資標的 / 變現標的
   quantity?: number;           // 買到 / 賣出的數量（選填）
@@ -67,6 +70,7 @@ interface StatsData {
   emergencyAutoFrom?: string;     // 自動預備金從哪個月份開始生效 (YYYY-MM)，之前的月份維持固定目標
   combineCrypto?: boolean;        // 加密貨幣合併計算成本與損益（預設 true）
   baseCosts?: { [unit: string]: { cost: number; date: string } }; // 各計算單位的起始成本與平均投入日期
+  liabilities?: Liability[];      // 負債清單
 }
 
 interface NetWorthPoint {
@@ -74,13 +78,20 @@ interface NetWorthPoint {
   date: string;    // 記錄日期
   cash: number;    // APP 計算的現金（預備金、存款、未投資額度…）
   invest: number;  // 投資市值
-  total: number;
+  debt?: number;   // 負債（舊資料沒有此欄位，視為 0）
+  total: number;   // 淨資產 = 現金 + 投資 − 負債
+}
+
+interface Liability {
+  name: string;         // 例如「學貸」
+  baseBalance: number;  // 設定時的餘額；之後在 APP 記錄的撥款與還款會自動增減
 }
 
 interface MonthlyData {
   income: number;            
   assetLiquidation: number; 
   reimbursement: number;
+  loanDisbursement: number;
   expense: number;          
   installmentExpense: number; 
   savingsExpense: number;  
@@ -164,6 +175,7 @@ const INITIAL_STATS_DATA: StatsData = {
   stressEquity: 35,
   combineCrypto: true,
   baseCosts: {},
+  liabilities: [{ name: '學貸', baseBalance: 0 }],
 };
 
 const DEFAULT_EXPENSE_CATEGORIES = [
@@ -475,6 +487,7 @@ export default function App() {
   const [newAssetKind, setNewAssetKind] = useState<AssetKind>('crypto');
   const [qtyDrafts, setQtyDrafts] = useState<{ [key: string]: string }>({});
   const [settingsPage, setSettingsPage] = useState<string | null>(null);
+  const [newLiabilityName, setNewLiabilityName] = useState('');
   const [reconcileActual, setReconcileActual] = useState('');
   const [reconcileTarget, setReconcileTarget] = useState<'emergency' | 'savings' | 'cumulative'>('emergency');
 
@@ -515,6 +528,9 @@ export default function App() {
     quantity: '',
     fromAsset: '',
     fromQuantity: '',
+    isLoanDisbursement: false,
+    isDebtRepayment: false,
+    liability: '',
     transferDirection: 'to_savings' as 'to_savings' | 'to_investable' | 'invest_to_emergency' | 'savings_to_emergency' | 'asset_swap',
   });
     
@@ -565,6 +581,8 @@ export default function App() {
         else if (t.fromEmergency) specialLabel = '預備金支付';
         else if (t.isAssetLiquidation) specialLabel = '資產變現';
         else if (t.isReimbursement) specialLabel = '代墊還款';
+        else if (t.isLoanDisbursement) specialLabel = `借款撥款 ${t.liability || ''}`;
+        if (t.isDebtRepayment) specialLabel = `償還負債 ${t.liability || ''}`;
         else if (t.type === 'adjust') specialLabel = `校正-${t.adjustTarget === 'savings' ? '現金存款' : t.adjustTarget === 'cumulative' ? '歷史可加碼' : '預備金'}`;
 
         const row = [
@@ -700,7 +718,7 @@ export default function App() {
     const monthlyRawData: { [key: string]: MonthlyData } = {};
     
     const initMonthObj = (): MonthlyData => ({
-        income: 0, assetLiquidation: 0, reimbursement: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, 
+        income: 0, assetLiquidation: 0, reimbursement: 0, loanDisbursement: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, 
         actualInvested: 0, investedFromMonthly: 0, investedFromCumulative: 0, 
         transferToSavingsFromMonthly: 0, transferToSavingsFromCumulative: 0, transferToInvestable: 0, 
         transferInvestToEmergencyFromMonthly: 0, transferInvestToEmergencyFromCumulative: 0, transferSavingsToEmergency: 0,
@@ -741,7 +759,9 @@ export default function App() {
               if (t.fromAsset && t.fromQuantity) m.qtySoldByAsset[t.fromAsset] = (m.qtySoldByAsset[t.fromAsset] || 0) + t.fromQuantity;
           }
       } else if (t.category === '收入') {
-        if (t.isAssetLiquidation) {
+        if (t.isLoanDisbursement) {
+            m.loanDisbursement += amount; // 借來的錢：進現金存款，不列入結餘
+        } else if (t.isAssetLiquidation) {
             m.assetLiquidation += amount;
             if (t.asset) m.liquidatedByAsset[t.asset] = (m.liquidatedByAsset[t.asset] || 0) + amount;
             if (t.asset && t.quantity) m.qtySoldByAsset[t.asset] = (m.qtySoldByAsset[t.asset] || 0) + t.quantity;
@@ -772,8 +792,8 @@ export default function App() {
             // 但不計入需要/想要
             m.expense += amount;
             if (t.groupId) m.installmentExpense += amount;
-            if (t.tag === 'need') m.need += amount;
-            else if (t.tag === 'want') m.want += amount;
+            if (!t.isDebtRepayment && t.tag === 'need') m.need += amount;
+            else if (!t.isDebtRepayment && t.tag === 'want') m.want += amount;
         }
         if (!m.categoryMap[t.category]) m.categoryMap[t.category] = 0;
         m.categoryMap[t.category] += amount;
@@ -835,7 +855,7 @@ export default function App() {
       runningEmergencyFund -= data.emergencyExpense;
       runningEmergencyFund += data.adjustEmergency;
       cumulativeSavings += data.adjustSavings;
-      cumulativeSavings = cumulativeSavings + data.assetLiquidation - data.savingsExpense;
+      cumulativeSavings = cumulativeSavings + data.assetLiquidation + data.loanDisbursement - data.savingsExpense;
       
       currentMonthMonthlyRemaining -= data.investedFromMonthly;
       currentMonthCumulativeRemaining -= data.investedFromCumulative;
@@ -1142,7 +1162,8 @@ export default function App() {
     const { values } = getAssetValues(nowStats.assetTotals, nowStats.assetQty);
     const invest = assets.reduce((s, a) => s + (values[a.name] || 0), 0);
     const cash = getAppCashTotal(nowStats);
-    const point: NetWorthPoint = { month, date: getLocalDayString(), cash: Math.round(cash), invest: Math.round(invest), total: Math.round(cash + invest) };
+    const debt = computeLiabilities().total;
+    const point: NetWorthPoint = { month, date: getLocalDayString(), cash: Math.round(cash), invest: Math.round(invest), debt: Math.round(debt), total: Math.round(cash + invest - debt) };
     setNetWorth(prev => [...prev.filter(p => p.month !== month), point].sort((a, b) => a.month.localeCompare(b.month)));
   }, [market.fetchedAt]);
 
@@ -1160,7 +1181,7 @@ export default function App() {
       category: getDefaultCategory(),
       amount: '', note: '', tag: 'need', type: 'expense',
       isInstallment: false, installmentCount: '3', installmentCalcType: 'total', perMonthInput: '',
-      investSource: 'monthly', fromSavings: false, fromEmergency: false, isAssetLiquidation: false, isReimbursement: false, asset: '', quantity: '', fromAsset: '', fromQuantity: '', transferDirection: 'to_savings'
+      investSource: 'monthly', fromSavings: false, fromEmergency: false, isAssetLiquidation: false, isReimbursement: false, isLoanDisbursement: false, isDebtRepayment: false, liability: '', asset: '', quantity: '', fromAsset: '', fromQuantity: '', transferDirection: 'to_savings'
     });
     setActiveTab('form');
   };
@@ -1176,6 +1197,7 @@ export default function App() {
       isInstallment: false, installmentCount: '3', installmentCalcType: 'total', perMonthInput: '',
       investSource: source, fromSavings: trans.fromSavings || false, fromEmergency: trans.fromEmergency || false, isAssetLiquidation: trans.isAssetLiquidation || false,
       isReimbursement: trans.isReimbursement || false, asset: trans.asset || '',
+      isLoanDisbursement: trans.isLoanDisbursement || false, isDebtRepayment: trans.isDebtRepayment || false, liability: trans.liability || '',
       quantity: trans.quantity ? String(trans.quantity) : '',
       fromAsset: trans.fromAsset || '',
       fromQuantity: trans.fromQuantity ? String(trans.fromQuantity) : '',
@@ -1253,6 +1275,11 @@ export default function App() {
         }
     }
 
+    const liabilityNames = (initialStats.liabilities || []).map(l => l.name);
+    const finalLoan = formData.type === 'income' && !formData.isAssetLiquidation && !formData.isReimbursement && formData.isLoanDisbursement;
+    const finalRepay = formData.type === 'expense' && finalCategory !== '投資' && formData.isDebtRepayment;
+    const finalLiability = finalLoan || finalRepay ? (formData.liability || liabilityNames[0] || '學貸') : undefined;
+    if (finalRepay) finalCategory = '償還負債';
     const isInvestExpense = formData.type === 'expense' && finalCategory === '投資';
     const isLiquidationIncome = formData.type === 'income' && formData.isAssetLiquidation;
     const isAssetSwap = formData.type === 'transfer' && formData.transferDirection === 'asset_swap';
@@ -1293,6 +1320,7 @@ export default function App() {
                       fromSavings: formData.fromSavings, fromEmergency: formData.fromEmergency, isAssetLiquidation: formData.isAssetLiquidation,
                       isReimbursement: finalReimbursement, asset: finalAsset, quantity: finalQuantity, investSource: finalInvestSource,
                       fromAsset: finalFromAsset, fromQuantity: finalFromQuantity,
+                      isLoanDisbursement: finalLoan, isDebtRepayment: finalRepay, liability: finalLiability,
                   };
 
                   if (t.id === editingId) {
@@ -1310,7 +1338,8 @@ export default function App() {
               category: finalCategory, tag: finalTag, amount: Number(finalAmount),
               fromSavings: formData.fromSavings, fromEmergency: formData.fromEmergency, isAssetLiquidation: formData.isAssetLiquidation,
               isReimbursement: finalReimbursement, asset: finalAsset, quantity: finalQuantity, investSource: finalInvestSource,
-              fromAsset: finalFromAsset, fromQuantity: finalFromQuantity
+              fromAsset: finalFromAsset, fromQuantity: finalFromQuantity,
+              isLoanDisbursement: finalLoan, isDebtRepayment: finalRepay, liability: finalLiability
           } : t));
       }
       setActiveTab('history');
@@ -1340,6 +1369,7 @@ export default function App() {
             note: `${formData.note} (${i + 1}/${count})`, groupId: groupId, tag: finalTag, fromSavings: false, fromEmergency: false, isAssetLiquidation: false,
             isReimbursement: false, asset: undefined, quantity: undefined, investSource: undefined,
             fromAsset: undefined, fromQuantity: undefined,
+            isLoanDisbursement: false, isDebtRepayment: false, liability: undefined,
           });
        }
        setTransactions([...newTransactions, ...transactions]);
@@ -1348,7 +1378,8 @@ export default function App() {
            id: baseId, ...formData, type: formData.type, category: finalCategory, tag: finalTag, amount: totalAmount, 
            transferDirection: formData.type === 'transfer' ? finalTransferDirection : undefined,
            isReimbursement: finalReimbursement, asset: finalAsset, quantity: finalQuantity, investSource: finalInvestSource,
-           fromAsset: finalFromAsset, fromQuantity: finalFromQuantity
+           fromAsset: finalFromAsset, fromQuantity: finalFromQuantity,
+           isLoanDisbursement: finalLoan, isDebtRepayment: finalRepay, liability: finalLiability
        };
        setTransactions([item, ...transactions]);
     }
@@ -1601,6 +1632,47 @@ export default function App() {
     </div>
   );
 
+  // ---- 負債 ----
+  const computeLiabilities = () => {
+    const today = getLocalDayString();
+    const list = initialStats.liabilities || [];
+    const rows = list.map(l => {
+      const disbursed = transactions.filter(t => t.date <= today && t.isLoanDisbursement && (t.liability || list[0]?.name) === l.name).reduce((s, t) => s + t.amount, 0);
+      const repaid = transactions.filter(t => t.date <= today && t.isDebtRepayment && (t.liability || list[0]?.name) === l.name).reduce((s, t) => s + t.amount, 0);
+      return { name: l.name, base: l.baseBalance || 0, disbursed, repaid, balance: Math.max(0, (l.baseBalance || 0) + disbursed - repaid) };
+    });
+
+    // 分期付款：尚未到期的各期金額，就是還欠的錢（到期那天已記成支出，負債自然減少）
+    const groups: { [g: string]: { name: string; remaining: number; remainingCount: number; totalCount: number; perMonth: number; lastDate: string } } = {};
+    transactions.filter(t => t.groupId && t.type === 'expense').forEach(t => {
+      const g = t.groupId!;
+      if (!groups[g]) groups[g] = { name: (t.note || '').replace(/\s*\(\d+\/\d+\)$/, '').trim() || t.category, remaining: 0, remainingCount: 0, totalCount: 0, perMonth: t.amount, lastDate: t.date };
+      const item = groups[g];
+      item.totalCount += 1;
+      if (t.date > item.lastDate) item.lastDate = t.date;
+      if (t.date > today) { item.remaining += t.amount; item.remainingCount += 1; item.perMonth = t.amount; }
+    });
+    const installments = Object.values(groups).filter(x => x.remaining > 0).sort((a, b) => b.remaining - a.remaining);
+    const installmentTotal = installments.reduce((s, x) => s + x.remaining, 0);
+
+    const debtTotal = rows.reduce((s, r) => s + r.balance, 0);
+    return { rows, installments, installmentTotal, debtTotal, total: debtTotal + installmentTotal };
+  };
+
+  const renderLiabilityChips = () => {
+    const list = initialStats.liabilities || [];
+    if (list.length <= 1) return null;
+    const selected = formData.liability || list[0].name;
+    return (
+      <div className="flex flex-wrap gap-2 px-1">
+        {list.map(l => (
+          <button key={l.name} type="button" onClick={() => setFormData({ ...formData, liability: l.name })}
+            className={`px-3 py-1.5 rounded-full text-sm font-bold border transition ${selected === l.name ? 'bg-black text-white border-black' : 'bg-white text-gray-500 border-gray-200'}`}>{l.name}</button>
+        ))}
+      </div>
+    );
+  };
+
   const renderFormView = () => {
     // 修正：額度依「交易日期」所在月份計算，而不是畫面上選擇的月份
     const formMonth = formData.date.substring(0, 7);
@@ -1699,9 +1771,9 @@ export default function App() {
             <div className="w-10"></div>
         </div>
         <div className="bg-gray-200 p-0.5 rounded-lg flex mb-4">
-            <button onClick={() => setFormData({...formData, type: 'expense', category: '飲食', tag: 'need', investSource: 'monthly', isAssetLiquidation: false, isReimbursement: false, asset: ''})} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition ${formData.type === 'expense' ? 'bg-white text-black shadow-sm' : 'text-gray-600'}`}>支出</button>
-            <button onClick={() => setFormData({...formData, type: 'income', category: '收入', tag: 'income', investSource: 'monthly', fromSavings: false, fromEmergency: false, isReimbursement: false, asset: ''})} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition ${formData.type === 'income' ? 'bg-white text-black shadow-sm' : 'text-gray-600'}`}>收入</button>
-            <button onClick={() => setFormData({...formData, type: 'transfer', category: '資金劃轉', tag: 'transfer', transferDirection: 'to_savings', fromSavings: false, fromEmergency: false, isAssetLiquidation: false, isReimbursement: false, asset: ''})} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition ${formData.type === 'transfer' ? 'bg-white text-black shadow-sm' : 'text-gray-600'}`}>劃轉</button>
+            <button onClick={() => setFormData({...formData, type: 'expense', category: '飲食', tag: 'need', investSource: 'monthly', isAssetLiquidation: false, isReimbursement: false, isLoanDisbursement: false, asset: ''})} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition ${formData.type === 'expense' ? 'bg-white text-black shadow-sm' : 'text-gray-600'}`}>支出</button>
+            <button onClick={() => setFormData({...formData, type: 'income', category: '收入', tag: 'income', investSource: 'monthly', fromSavings: false, fromEmergency: false, isReimbursement: false, isDebtRepayment: false, asset: ''})} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition ${formData.type === 'income' ? 'bg-white text-black shadow-sm' : 'text-gray-600'}`}>收入</button>
+            <button onClick={() => setFormData({...formData, type: 'transfer', category: '資金劃轉', tag: 'transfer', transferDirection: 'to_savings', fromSavings: false, fromEmergency: false, isAssetLiquidation: false, isLoanDisbursement: false, isDebtRepayment: false, isReimbursement: false, asset: ''})} className={`flex-1 py-1.5 text-sm font-bold rounded-md transition ${formData.type === 'transfer' ? 'bg-white text-black shadow-sm' : 'text-gray-600'}`}>劃轉</button>
         </div>
         <div className="bg-white rounded-2xl overflow-hidden ">
             <div className="flex items-center justify-between p-5 border-b border-gray-50">
@@ -1857,6 +1929,19 @@ export default function App() {
                         <button onClick={() => setFormData({...formData, tag: 'advance'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.tag === 'advance' ? 'bg-gray-100 text-gray-800 border-gray-200' : 'bg-white text-gray-400 border-gray-200'}`}>代墊</button>
                     </div>
                     {formData.tag === 'advance' && <p className="text-xs text-gray-500 px-1 -mt-2">代墊會先從現金扣除，但不算入需要/想要；收到還款時記成收入並勾選「代墊還款」。</p>}
+                    <div onClick={() => setFormData({...formData, isDebtRepayment: !formData.isDebtRepayment, isInstallment: false})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.isDebtRepayment ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
+                        <div className="flex items-center gap-2">
+                            <div className={`p-1.5 rounded-full ${formData.isDebtRepayment ? 'bg-black text-white' : 'bg-gray-100 text-gray-400'}`}><CreditCard className="w-4 h-4" /></div>
+                            <div className="flex flex-col"><span className={`text-sm font-bold ${formData.isDebtRepayment ? 'text-gray-800' : 'text-gray-500'}`}>償還負債</span></div>
+                        </div>
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${formData.isDebtRepayment ? 'bg-black border-black' : 'border-gray-300'}`}>{formData.isDebtRepayment && <CheckCircle className="w-3.5 h-3.5 text-white" />}</div>
+                    </div>
+                    {formData.isDebtRepayment && (
+                        <>
+                            {renderLiabilityChips()}
+                            <p className="text-xs text-gray-500 px-1">還款是實際的現金支出，會計入本月支出並減少負債，但不算入需要／想要。</p>
+                        </>
+                    )}
                     <div onClick={() => setFormData({...formData, fromSavings: !formData.fromSavings, fromEmergency: false, isInstallment: false})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.fromSavings ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
                         <div className="flex items-center gap-2">
                             <div className={`p-1.5 rounded-full ${formData.fromSavings ? 'bg-black text-white' : 'bg-gray-100 text-gray-400'}`}><PiggyBank className="w-4 h-4" /></div>
@@ -1877,7 +1962,7 @@ export default function App() {
                 </div>
             ) : (
                 <div className="p-4 flex flex-col gap-3">
-                    <div onClick={() => setFormData({...formData, isAssetLiquidation: !formData.isAssetLiquidation, isReimbursement: false, asset: ''})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.isAssetLiquidation ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
+                    <div onClick={() => setFormData({...formData, isAssetLiquidation: !formData.isAssetLiquidation, isReimbursement: false, isLoanDisbursement: false, asset: ''})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.isAssetLiquidation ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
                         <div className="flex items-center gap-2">
                             <div className={`p-1.5 rounded-full ${formData.isAssetLiquidation ? 'bg-black text-white' : 'bg-gray-100 text-gray-400'}`}><RefreshCcw className="w-4 h-4" /></div>
                             <div className="flex flex-col"><span className={`text-sm font-bold ${formData.isAssetLiquidation ? 'text-gray-800' : 'text-gray-500'}`}>資產變現</span></div>
@@ -1892,13 +1977,27 @@ export default function App() {
                         </div>
                     )}
 
-                    <div onClick={() => setFormData({...formData, isReimbursement: !formData.isReimbursement, isAssetLiquidation: false, asset: ''})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.isReimbursement ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
+                    <div onClick={() => setFormData({...formData, isReimbursement: !formData.isReimbursement, isAssetLiquidation: false, isLoanDisbursement: false, asset: ''})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.isReimbursement ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
                         <div className="flex items-center gap-2">
                             <div className={`p-1.5 rounded-full ${formData.isReimbursement ? 'bg-black text-white' : 'bg-gray-100 text-gray-400'}`}><Tag className="w-4 h-4" /></div>
                             <div className="flex flex-col"><span className={`text-sm font-bold ${formData.isReimbursement ? 'text-gray-800' : 'text-gray-500'}`}>代墊還款</span></div>
                         </div>
                         <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${formData.isReimbursement ? 'bg-black border-black' : 'border-gray-300'}`}>{formData.isReimbursement && <CheckCircle className="w-3.5 h-3.5 text-white" />}</div>
                     </div>
+
+                    <div onClick={() => setFormData({...formData, isLoanDisbursement: !formData.isLoanDisbursement, isAssetLiquidation: false, isReimbursement: false, asset: ''})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.isLoanDisbursement ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
+                        <div className="flex items-center gap-2">
+                            <div className={`p-1.5 rounded-full ${formData.isLoanDisbursement ? 'bg-black text-white' : 'bg-gray-100 text-gray-400'}`}><CreditCard className="w-4 h-4" /></div>
+                            <div className="flex flex-col"><span className={`text-sm font-bold ${formData.isLoanDisbursement ? 'text-gray-800' : 'text-gray-500'}`}>學貸／借款撥款</span></div>
+                        </div>
+                        <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${formData.isLoanDisbursement ? 'bg-black border-black' : 'border-gray-300'}`}>{formData.isLoanDisbursement && <CheckCircle className="w-3.5 h-3.5 text-white" />}</div>
+                    </div>
+                    {formData.isLoanDisbursement && (
+                        <>
+                            {renderLiabilityChips()}
+                            <p className="text-xs text-gray-500 px-1">借來的錢會進入現金存款並增加負債，不算收入，也不會變成投資額度。要用它付房租時，支出選「現金存款」支付。</p>
+                        </>
+                    )}
                 </div>
             )}
         </div>
@@ -2036,6 +2135,8 @@ export default function App() {
                                     {t.fromSavings && <span className="bg-gray-100 text-gray-800 text-xs font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><PiggyBank className="w-2.5 h-2.5" /> 存款</span>}
                                     {t.fromEmergency && <span className="bg-red-100 text-red-600 text-xs font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><ShieldAlert className="w-2.5 h-2.5" /> 預備金</span>}
                                     {t.isAssetLiquidation && <span className="bg-gray-100 text-gray-800 text-xs font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><RefreshCcw className="w-2.5 h-2.5" /> 變現{t.asset ? ` ${t.asset}` : ''}</span>}
+                                    {t.isLoanDisbursement && <span className="bg-gray-100 text-gray-800 text-xs font-bold px-1.5 py-0.5 rounded-md">借款撥款{t.liability ? `・${t.liability}` : ''}</span>}
+                                    {t.isDebtRepayment && <span className="bg-gray-100 text-gray-800 text-xs font-bold px-1.5 py-0.5 rounded-md">償還負債{t.liability ? `・${t.liability}` : ''}</span>}
                                     {t.isReimbursement && <span className="bg-gray-100 text-gray-800 text-xs font-bold px-1.5 py-0.5 rounded-md flex items-center gap-0.5"><Tag className="w-2.5 h-2.5" /> 代墊還款</span>}
                                     {isAdjust && <span className="bg-gray-100 text-gray-800 text-xs font-bold px-1.5 py-0.5 rounded-md">{t.adjustTarget === 'savings' ? '現金存款' : t.adjustTarget === 'cumulative' ? '歷史可加碼' : '預備金'}</span>}
                                     {isTransfer && <span className={`text-xs font-bold px-1.5 py-0.5 rounded-md ${t.transferDirection === 'to_savings' ? 'bg-gray-100 text-gray-800' : t.transferDirection === 'to_investable' ? 'bg-gray-100 text-gray-800' : 'bg-gray-100 text-gray-800'}`}>{t.transferDirection === 'to_savings' ? '投資➔存款' : t.transferDirection === 'to_investable' ? '存款➔投資' : t.transferDirection === 'invest_to_emergency' ? '投資➔預備金' : t.transferDirection === 'asset_swap' ? `${t.fromAsset || '?'}➔${t.asset || '?'}` : '存款➔預備金'}</span>}
@@ -2047,7 +2148,7 @@ export default function App() {
                             <p className={`font-bold text-base ${t.type === 'income' ? 'text-green-600' : isTransfer ? 'text-gray-500' : 'text-black'}`}>
                                 {isAdjust ? (t.amount >= 0 ? '+' : '−') : t.type === 'income' ? '+' : isTransfer ? '⇌' : '-'}{formatMoney(isAdjust ? Math.abs(t.amount) : t.amount)}
                             </p>
-                            {t.category !== '投資' && t.type === 'expense' && (
+                            {t.category !== '投資' && t.type === 'expense' && !t.isDebtRepayment && (
                                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${t.tag === 'need' ? 'bg-gray-100 text-gray-500' : t.tag === 'advance' ? 'bg-gray-100 text-gray-800' : 'bg-gray-100 text-gray-800'}`}>{tagLabel(t.tag)}</span>
                             )}
                         </div>
@@ -2317,18 +2418,19 @@ export default function App() {
     const { values } = getAssetValues(nowStats.assetTotals, nowStats.assetQty);
     const investNow = assets.reduce((s, a) => s + (values[a.name] || 0), 0);
     const cashNow = getAppCashTotal(nowStats);
-    const totalNow = cashNow + investNow;
+    const debtNow = computeLiabilities().total;
+    const totalNow = cashNow + investNow - debtNow;
     const last = netWorth[netWorth.length - 1];
     const prev = netWorth.length >= 2 ? netWorth[netWorth.length - 2] : null;
 
     // 上一期到這一期：淨資產變化拆成「存下的現金」、「新投入」與「市場漲跌」
-    let breakdown: { saved: number; invested: number; market: number } | null = null;
+    let breakdown: { saved: number; invested: number; market: number; debt: number } | null = null;
     if (last && prev) {
       const inRange = (d: string) => d > prev.date && d <= last.date;
       const known = (n?: string) => !!n && assets.some(a => a.name === n);
       const invested = transactions.filter(t => inRange(t.date) && t.type === 'expense' && t.category === '投資' && known(t.asset)).reduce((s, t) => s + t.amount, 0)
         - transactions.filter(t => inRange(t.date) && t.type === 'income' && t.isAssetLiquidation && known(t.asset)).reduce((s, t) => s + t.amount, 0);
-      breakdown = { saved: last.cash - prev.cash, invested, market: last.invest - prev.invest - invested };
+      breakdown = { saved: last.cash - prev.cash, invested, market: last.invest - prev.invest - invested, debt: (last.debt || 0) - (prev.debt || 0) };
     }
 
     return (
@@ -2339,7 +2441,7 @@ export default function App() {
             <span className="text-3xl font-bold tracking-tight tabular-nums">${formatMoney(totalNow)}</span>
             {last && prev && <span className={`text-sm font-bold tabular-nums ${pnlColor(last.total - prev.total)}`}>{signed(last.total - prev.total)} 較上期</span>}
           </div>
-          <p className="text-sm text-gray-500 mt-1 tabular-nums">現金 ${formatMoney(cashNow)}・投資 ${formatMoney(investNow)}</p>
+          <p className="text-sm text-gray-500 mt-1 tabular-nums">現金 ${formatMoney(cashNow)}・投資 ${formatMoney(investNow)}{debtNow > 0 && <>・負債 −${formatMoney(debtNow)}</>}</p>
 
           {netWorth.length >= 2 && (
             <div className="h-40 mt-4 -mx-2">
@@ -2361,6 +2463,7 @@ export default function App() {
               <div className="flex justify-between text-base"><span>現金增減</span><span className={`tabular-nums ${pnlColor(breakdown.saved)}`}>{signed(breakdown.saved)}</span></div>
               <div className="flex justify-between text-base"><span>新投入</span><span className="tabular-nums text-gray-600">{signed(breakdown.invested)}</span></div>
               <div className="flex justify-between text-base"><span>市場漲跌</span><span className={`tabular-nums ${pnlColor(breakdown.market)}`}>{signed(breakdown.market)}</span></div>
+              {Math.round(breakdown.debt) !== 0 && <div className="flex justify-between text-base"><span>負債增減</span><span className={`tabular-nums ${pnlColor(-breakdown.debt)}`}>{signed(breakdown.debt)}</span></div>}
             </div>
           )}
         </CardContainer>
@@ -2517,7 +2620,7 @@ export default function App() {
 
     const PAGE_TITLES: { [key: string]: string } = {
       categories: '分類與預算', emergency: '緊急預備金', initial: '起始數值',
-      assets: '投資標的', market: '市場資料', risk: '風險規則', costs: '成本與損益',
+      assets: '投資標的', market: '市場資料', risk: '風險規則', costs: '成本與損益', debts: '負債',
       reconcile: '餘額校正', backup: '備份與匯入',
     };
 
@@ -2579,6 +2682,66 @@ export default function App() {
               </SectionFooter>
             </div>
           );
+
+        case 'debts': {
+          const list = initialStats.liabilities || [];
+          const summary = computeLiabilities();
+          const setList = (next: Liability[]) => setInitialStats(prev => ({ ...prev, liabilities: next }));
+          return (
+            <>
+              {list.map((l, idx) => {
+                const row = summary.rows.find(r => r.name === l.name);
+                return (
+                  <div key={l.name + idx}>
+                    <div className="flex items-center justify-between px-4 mb-1.5">
+                      <span className="text-sm text-gray-500">{l.name}</span>
+                      {list.length > 1 && <button onClick={() => setList(list.filter((_, i) => i !== idx))} className="text-sm text-red-500">移除</button>}
+                    </div>
+                    <CardContainer className="divide-y divide-gray-100">
+                      <InputRow label="設定時的餘額" value={l.baseBalance || ''} onChange={v => { if (/^\d*$/.test(v)) setList(list.map((x, i) => i === idx ? { ...x, baseBalance: Number(v) || 0 } : x)); }} />
+                      <div className="px-4 py-3 flex justify-between"><span className="text-base text-black">之後撥款</span><span className="text-base tabular-nums text-gray-600">+${formatMoney(row?.disbursed || 0)}</span></div>
+                      <div className="px-4 py-3 flex justify-between"><span className="text-base text-black">之後還款</span><span className="text-base tabular-nums text-gray-600">−${formatMoney(row?.repaid || 0)}</span></div>
+                      <div className="px-4 py-3 flex justify-between"><span className="text-base font-bold text-black">目前餘額</span><span className="text-base font-bold tabular-nums">${formatMoney(row?.balance || 0)}</span></div>
+                    </CardContainer>
+                  </div>
+                );
+              })}
+              <div>
+                <SectionHeader>分期付款</SectionHeader>
+                <CardContainer className="divide-y divide-gray-100">
+                  {summary.installments.length === 0 ? (
+                    <div className="px-4 py-3 text-base text-gray-400">目前沒有未付完的分期</div>
+                  ) : summary.installments.map(x => (
+                    <div key={x.name + x.lastDate} className="px-4 py-3">
+                      <div className="flex justify-between items-baseline">
+                        <span className="text-base text-black">{x.name}</span>
+                        <span className="text-base font-bold tabular-nums">${formatMoney(x.remaining)}</span>
+                      </div>
+                      <p className="text-sm text-gray-500 mt-0.5 tabular-nums">每期 ${formatMoney(x.perMonth)}・還剩 {x.remainingCount} / {x.totalCount} 期・最後一期 {x.lastDate}</p>
+                    </div>
+                  ))}
+                </CardContainer>
+                <SectionFooter>分期付款的未到期金額會自動算進負債，不需要另外記錄。每期到期時已經記成支出，負債會自動減少。</SectionFooter>
+              </div>
+
+              <CardContainer>
+                <div className="px-4 py-3 flex justify-between items-baseline">
+                  <span className="text-base font-bold text-black">負債合計</span>
+                  <span className="text-xl font-bold tabular-nums">${formatMoney(summary.total)}</span>
+                </div>
+              </CardContainer>
+
+              <div>
+                <SectionHeader>新增負債</SectionHeader>
+                <CardContainer className="p-4 flex gap-2">
+                  <input type="text" placeholder="例如 信用卡分期" value={newLiabilityName} onChange={e => setNewLiabilityName(e.target.value)} className="flex-1 min-w-0 bg-gray-100 rounded-xl px-3 py-2 text-base outline-none" />
+                  <button onClick={() => { const n = newLiabilityName.trim(); if (!n || list.some(l => l.name === n)) return; setList([...list, { name: n, baseBalance: 0 }]); setNewLiabilityName(''); }} disabled={!newLiabilityName.trim()} className="px-3 py-2 rounded-xl text-white disabled:opacity-40" style={{ backgroundColor: THEME.accentGold }} aria-label="新增負債"><Plus className="w-5 h-5" /></button>
+                </CardContainer>
+                <SectionFooter>「設定時的餘額」填現在的總額，例如學貸目前約 60 萬。之後在記帳時勾選「學貸／借款撥款」或「償還負債」，餘額會自動增減。負債會從淨資產中扣除。</SectionFooter>
+              </div>
+            </>
+          );
+        }
 
         case 'initial':
           return (
@@ -2790,6 +2953,7 @@ export default function App() {
               <NavRow label="分類與預算" detail={budgetCount > 0 ? `${budgetCount} 項預算` : undefined} onClick={() => setSettingsPage('categories')} />
               <NavRow label="緊急預備金" detail={isAutoEmergency ? '自動' : initialStats.emergencyGoal ? `$${formatMoney(initialStats.emergencyGoal)}` : '未設定'} onClick={() => setSettingsPage('emergency')} />
               <NavRow label="起始數值" onClick={() => setSettingsPage('initial')} />
+              <NavRow label="負債" detail={computeLiabilities().total > 0 ? `$${formatMoney(computeLiabilities().total)}` : '未設定'} onClick={() => setSettingsPage('debts')} />
             </CardContainer>
           </div>
 
@@ -2815,7 +2979,7 @@ export default function App() {
             <NavRow label="初始化所有資料" danger onClick={() => setResetModal(true)} />
           </CardContainer>
 
-          <p className="text-center text-xs text-gray-400">臨界財富 v10.1</p>
+          <p className="text-center text-xs text-gray-400">臨界財富 v10.2</p>
         </div>
     );
   };
