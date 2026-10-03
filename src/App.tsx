@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart, ShieldAlert, Tag, ShoppingBag, Briefcase, Database } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart, ShieldAlert, Tag, ShoppingBag, Briefcase, Database, Search } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip,
   LineChart, Line, XAxis, YAxis
@@ -71,6 +71,7 @@ interface StatsData {
   combineCrypto?: boolean;        // 加密貨幣合併計算成本與損益（預設 true）
   baseCosts?: { [unit: string]: { cost: number; date: string } }; // 各計算單位的起始成本與平均投入日期
   liabilities?: Liability[];      // 負債清單
+  receivableFrom?: string;        // 代墊改為「應收款」的起始月份 (YYYY-MM)，之前維持計入支出
 }
 
 interface NetWorthPoint {
@@ -116,6 +117,8 @@ interface MonthlyData {
   adjustEmergency: number;
   adjustSavings: number;
   adjustCumulative: number;
+  advanceRecv: number;   // 應收款模式：本月代墊（從現金存款墊付，不算支出）
+  reimbRecv: number;     // 應收款模式：本月代墊還款（先沖銷應收款，再算收入）
 }
 
 interface ProcessedMonthData extends MonthlyData {
@@ -197,7 +200,8 @@ const ASSET_KIND_LABEL: { [key in AssetKind]: string } = {
   other: '其他',
 };
 
-const NEED_LOOKBACK_MONTHS = 6; // 自動預備金：取最近幾個有紀錄的月份平均
+const NEED_LOOKBACK_MONTHS = 6;
+const ALL_MONTHS = '0000-00'; // 代表「套用到所有月份」 // 自動預備金：取最近幾個有紀錄的月份平均
 
 const COLORS = ['#C59D5F', '#8B5E3C', '#588157', '#E9C46A', '#F4A261', '#E76F51', '#2A9D8F', '#264653', '#AAB3AB', '#B5838D'];
 
@@ -383,6 +387,8 @@ export default function App() {
       const merged: StatsData = { ...INITIAL_STATS_DATA, ...parsed };
       // 遷移：已經開啟自動模式但沒有起始月份的，從本月開始生效，避免改寫過去月份
       if (merged.emergencyMode === 'auto' && !merged.emergencyAutoFrom) merged.emergencyAutoFrom = getLocalMonthString();
+      // 代墊改為應收款：從開始使用這個版本的月份起生效，不回溯改寫過去的額度
+      if (!merged.receivableFrom) merged.receivableFrom = getLocalMonthString();
       return merged;
     } catch (e) { return INITIAL_STATS_DATA; }
   });
@@ -487,6 +493,7 @@ export default function App() {
   const [newAssetKind, setNewAssetKind] = useState<AssetKind>('crypto');
   const [qtyDrafts, setQtyDrafts] = useState<{ [key: string]: string }>({});
   const [settingsPage, setSettingsPage] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [newLiabilityName, setNewLiabilityName] = useState('');
   const [reconcileActual, setReconcileActual] = useState('');
   const [reconcileTarget, setReconcileTarget] = useState<'emergency' | 'savings' | 'cumulative'>('emergency');
@@ -716,6 +723,7 @@ export default function App() {
 
   const stats = useMemo(() => {
     const monthlyRawData: { [key: string]: MonthlyData } = {};
+    const receivableFrom = initialStats.receivableFrom || getLocalMonthString();
     
     const initMonthObj = (): MonthlyData => ({
         income: 0, assetLiquidation: 0, reimbursement: 0, loanDisbursement: 0, expense: 0, installmentExpense: 0, savingsExpense: 0, emergencyExpense: 0, 
@@ -724,7 +732,8 @@ export default function App() {
         transferInvestToEmergencyFromMonthly: 0, transferInvestToEmergencyFromCumulative: 0, transferSavingsToEmergency: 0,
         need: 0, want: 0, advance: 0, categoryMap: {}, investedByAsset: {}, liquidatedByAsset: {},
         qtyBoughtByAsset: {}, qtySoldByAsset: {},
-        adjustEmergency: 0, adjustSavings: 0, adjustCumulative: 0
+        adjustEmergency: 0, adjustSavings: 0, adjustCumulative: 0,
+        advanceRecv: 0, reimbRecv: 0
     });
 
     availableMonths.forEach(m => { monthlyRawData[m] = initMonthObj(); });
@@ -766,9 +775,12 @@ export default function App() {
             if (t.asset) m.liquidatedByAsset[t.asset] = (m.liquidatedByAsset[t.asset] || 0) + amount;
             if (t.asset && t.quantity) m.qtySoldByAsset[t.asset] = (m.qtySoldByAsset[t.asset] || 0) + t.quantity;
         } else {
-            // 代墊還款以現金基礎計入收入，同時用來沖銷未收回的代墊
-            m.income += amount;
             if (t.isReimbursement) m.reimbursement += amount;
+            if (t.isReimbursement && monthKey >= receivableFrom) {
+                m.reimbRecv += amount; // 應收款模式：月結時先沖銷應收款，多出來的才算收入
+            } else {
+                m.income += amount;    // 舊制：代墊還款計入收入
+            }
         }
       } else if (t.category === '投資') {
         m.actualInvested += amount;
@@ -784,19 +796,25 @@ export default function App() {
         }
       } else {
         if (t.tag === 'advance') m.advance += amount;
+        const isReceivable = t.tag === 'advance' && monthKey >= receivableFrom && !t.fromEmergency;
 
-        if (t.fromSavings) m.savingsExpense += amount;
+        if (isReceivable) {
+            // 應收款模式：代墊是別人欠你的錢，從現金存款先墊付，不算支出、不影響結餘
+            m.advanceRecv += amount;
+        } else if (t.fromSavings) m.savingsExpense += amount;
         else if (t.fromEmergency) m.emergencyExpense += amount;
         else {
-            // 代墊仍是實際流出的現金，所以計入 expense（保守：錢回來前不會變成可投資額度），
-            // 但不計入需要/想要
+            // 舊制的代墊（起始月份之前）仍計入支出，但不計入需要/想要
             m.expense += amount;
             if (t.groupId) m.installmentExpense += amount;
             if (!t.isDebtRepayment && t.tag === 'need') m.need += amount;
             else if (!t.isDebtRepayment && t.tag === 'want') m.want += amount;
         }
-        if (!m.categoryMap[t.category]) m.categoryMap[t.category] = 0;
-        m.categoryMap[t.category] += amount;
+        if (!isReceivable) {
+            // 應收款不是花費，不放進支出分類
+            if (!m.categoryMap[t.category]) m.categoryMap[t.category] = 0;
+            m.categoryMap[t.category] += amount;
+        }
       }
     });
 
@@ -824,6 +842,7 @@ export default function App() {
     let carryOverBudget = initialStats.initialInvestable || 0; 
     let unfilledDeficit = 0;
     let runningAdvance = 0;
+    let runningReceivable = 0; // 應收款模式下尚未收回的代墊
     const needHistory: number[] = [];
     const initialAssetTotals: { [key: string]: number } = {};
     assets.forEach(a => { initialAssetTotals[a.name] = a.baseline || 0; });
@@ -869,6 +888,15 @@ export default function App() {
       currentMonthMonthlyRemaining -= data.transferInvestToEmergencyFromMonthly;
       currentMonthCumulativeRemaining -= data.transferInvestToEmergencyFromCumulative;
       cumulativeSavings -= data.transferSavingsToEmergency;
+
+      // 應收款：代墊從現金存款扣；還款先沖銷應收款（回到現金存款），超過的部分（舊制代墊的還款）才算收入
+      cumulativeSavings -= data.advanceRecv;
+      const recvAvailable = runningReceivable + data.advanceRecv;
+      const reimbToSavings = Math.min(data.reimbRecv, recvAvailable);
+      const reimbToIncome = data.reimbRecv - reimbToSavings;
+      cumulativeSavings += reimbToSavings;
+      runningReceivable = recvAvailable - reimbToSavings;
+      data.income += reimbToIncome;
 
       const netIncome = data.income - data.expense; 
       
@@ -1928,7 +1956,7 @@ export default function App() {
                         <button onClick={() => setFormData({...formData, tag: 'want'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.tag === 'want' ? 'bg-gray-100 text-gray-800 border-gray-200' : 'bg-white text-gray-400 border-gray-200'}`}>想要</button>
                         <button onClick={() => setFormData({...formData, tag: 'advance'})} className={`flex-1 py-3 rounded-xl text-sm font-bold transition border ${formData.tag === 'advance' ? 'bg-gray-100 text-gray-800 border-gray-200' : 'bg-white text-gray-400 border-gray-200'}`}>代墊</button>
                     </div>
-                    {formData.tag === 'advance' && <p className="text-xs text-gray-500 px-1 -mt-2">代墊會先從現金扣除，但不算入需要/想要；收到還款時記成收入並勾選「代墊還款」。</p>}
+                    {formData.tag === 'advance' && <p className="text-xs text-gray-500 px-1 -mt-2">代墊是應收款：先從現金存款墊付，不算支出。收到還款時記成收入並勾選「代墊還款」，錢會回到現金存款。確定收不回來時，把這筆改成「需要」或「想要」即可。</p>}
                     <div onClick={() => setFormData({...formData, isDebtRepayment: !formData.isDebtRepayment, isInstallment: false})} className={`flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer ${formData.isDebtRepayment ? 'bg-gray-100 border-gray-200' : 'bg-white border-gray-200'}`}>
                         <div className="flex items-center gap-2">
                             <div className={`p-1.5 rounded-full ${formData.isDebtRepayment ? 'bg-black text-white' : 'bg-gray-100 text-gray-400'}`}><CreditCard className="w-4 h-4" /></div>
@@ -2042,12 +2070,23 @@ export default function App() {
     // 修正：先複製再排序，不直接改動 state
     const sorted = [...transactions].sort((a, b) => b.date.localeCompare(a.date) || b.id - a.id);
     const today = getLocalDayString(); 
+    // 搜尋：備註、分類、金額、日期、標的、負債名稱；可用空白分隔多個關鍵字（全部符合才顯示）
+    const keywords = searchQuery.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const isSearching = keywords.length > 0;
+    const matchesSearch = (t: Transaction) => {
+        const haystack = [t.note, t.category, String(t.amount), t.date, t.date.replace(/-/g, '/'), t.asset, t.fromAsset, t.liability]
+            .filter(Boolean).join(' ').toLowerCase();
+        return keywords.every(k => haystack.includes(k));
+    };
     const filtered = sorted.filter(t => {
-        if (hideFuture && t.date > today) return false;
+        if (!isSearching && hideFuture && t.date > today) return false; // 搜尋時連未來的分期也一起找
         if (filterCategory && t.category !== filterCategory) return false;
         if (filterTag && t.tag !== filterTag) return false;
+        if (isSearching && !matchesSearch(t)) return false;
         return true;
     });
+    const searchExpense = filtered.filter(t => t.type === 'expense').reduce((s, t) => s + Number(t.amount), 0);
+    const searchIncome = filtered.filter(t => t.type === 'income').reduce((s, t) => s + Number(t.amount), 0);
 
     const groupedTransactions = filtered.reduce((groups: { [key: string]: Transaction[] }, t) => {
         const date = new Date(t.date);
@@ -2072,7 +2111,7 @@ export default function App() {
         <div className="flex justify-between items-center px-1">
           <div>
             <h2 className="text-3xl font-bold text-black tracking-tight">紀錄</h2>
-            <p className="text-xs font-semibold text-gray-400 mt-1">{filtered.length} 筆 {hideFuture && '(隱藏未來)'}</p>
+            <p className="text-xs font-semibold text-gray-400 mt-1">{filtered.length} 筆 {!isSearching && hideFuture && '(隱藏未來)'}</p>
           </div>
           <div className="flex gap-1.5">
             <button onClick={() => setFilterTag(filterTag === 'want' ? null : 'want')} className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-bold transition border ${filterTag === 'want' ? 'bg-black text-white border-black' : 'bg-white text-gray-800 border-gray-200 hover:bg-gray-100'}`}>
@@ -2093,6 +2132,25 @@ export default function App() {
           </div>
         </div>
         
+        <div>
+          <div className="flex items-center gap-2 bg-gray-200 rounded-xl px-3 py-2">
+            <Search className="w-4 h-4 text-gray-500 flex-shrink-0" />
+            <input type="search" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+              placeholder="搜尋備註、分類、金額或日期"
+              className="flex-1 min-w-0 bg-transparent outline-none text-base text-black placeholder-gray-500" />
+            {searchQuery && (
+              <button onClick={() => setSearchQuery('')} aria-label="清除搜尋" className="w-5 h-5 rounded-full bg-gray-400 text-white flex items-center justify-center flex-shrink-0"><X className="w-3 h-3" /></button>
+            )}
+          </div>
+          {isSearching && (
+            <p className="text-sm text-gray-500 px-1 mt-2 tabular-nums">
+              找到 {filtered.length} 筆
+              {searchExpense > 0 && `・支出合計 $${formatMoney(searchExpense)}`}
+              {searchIncome > 0 && `・收入合計 $${formatMoney(searchIncome)}`}
+            </p>
+          )}
+        </div>
+
         {(filterCategory || filterTag) && (
             <div className="flex flex-wrap gap-2">
                 {filterCategory && (
@@ -2159,6 +2217,7 @@ export default function App() {
           </div>
         ))}
         {transactions.length === 0 && <div className="text-center py-20 text-gray-400"><p>無紀錄</p></div>}
+        {transactions.length > 0 && filtered.length === 0 && <div className="text-center py-16 text-gray-400"><p>{isSearching ? `找不到「${searchQuery.trim()}」相關的紀錄` : '沒有符合條件的紀錄'}</p></div>}
       </div>
     );
   };
@@ -2656,6 +2715,25 @@ export default function App() {
                 </CardContainer>
                 <SectionFooter>留空代表不設預算。設定後會出現在總覽的預算進度中。</SectionFooter>
               </div>
+              <div>
+                <SectionHeader>代墊</SectionHeader>
+                <CardContainer>
+                  <div className="px-4 py-3 flex items-center justify-between">
+                    <span className="text-base text-black">應收款套用到所有紀錄</span>
+                    <button
+                      onClick={() => setInitialStats(prev => ({ ...prev, receivableFrom: prev.receivableFrom === ALL_MONTHS ? getLocalMonthString() : ALL_MONTHS }))}
+                      aria-label="切換應收款套用範圍"
+                      className={`w-12 h-7 rounded-full p-1 transition-colors ${initialStats.receivableFrom === ALL_MONTHS ? 'bg-green-500' : 'bg-gray-200'}`}>
+                      <div className={`w-5 h-5 bg-white rounded-full shadow-sm transform transition-transform ${initialStats.receivableFrom === ALL_MONTHS ? 'translate-x-5' : 'translate-x-0'}`}></div>
+                    </button>
+                  </div>
+                </CardContainer>
+                <SectionFooter>
+                  {initialStats.receivableFrom === ALL_MONTHS
+                    ? '所有代墊都視為應收款：不算支出，還款回到現金存款。過去各月的投資額度會依此重新計算。'
+                    : `目前從 ${initialStats.receivableFrom || getLocalMonthString()} 起把代墊視為應收款，之前的代墊仍計入支出。開啟後會套用到所有紀錄，並重新計算過去的投資額度。`}
+                </SectionFooter>
+              </div>
             </>
           );
 
@@ -2979,7 +3057,7 @@ export default function App() {
             <NavRow label="初始化所有資料" danger onClick={() => setResetModal(true)} />
           </CardContainer>
 
-          <p className="text-center text-xs text-gray-400">臨界財富 v10.2</p>
+          <p className="text-center text-xs text-gray-400">臨界財富 v10.5</p>
         </div>
     );
   };
@@ -3004,7 +3082,7 @@ export default function App() {
           </div>
           <div className="flex-none bg-white/95 backdrop-blur-xl border-t border-gray-200 pb-[calc(env(safe-area-inset-bottom)+5px)] pt-2 px-2 flex justify-around items-center z-30">
             <button onClick={() => setActiveTab('dashboard')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'dashboard' ? 'bg-gray-100 text-black' : 'text-gray-400 active:bg-gray-50'}`}><PieChart className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-xs font-bold">總覽</span></button>
-            <button onClick={() => { setActiveTab('history'); setFilterCategory(null); setFilterTag(null); }} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'history' ? 'bg-gray-100 text-black' : 'text-gray-400 active:bg-gray-50'}`}><List className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-xs font-bold">明細</span></button>
+            <button onClick={() => { setActiveTab('history'); setFilterCategory(null); setFilterTag(null); setSearchQuery(''); }} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'history' ? 'bg-gray-100 text-black' : 'text-gray-400 active:bg-gray-50'}`}><List className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-xs font-bold">明細</span></button>
             <div className="relative -top-6"><button onClick={handleFabClick} className={`w-14 h-14 rounded-full flex items-center justify-center text-white shadow-xl hover:scale-105 transition-transform ${activeTab === 'form' && !editingId ? 'bg-gray-900 rotate-45' : 'bg-black'}`}><Plus className="w-7 h-7" strokeWidth={3} /></button></div>
             <button onClick={() => setActiveTab('investment')} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'investment' ? 'bg-gray-100 text-black' : 'text-gray-400 active:bg-gray-50'}`}><TrendingUp className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-xs font-bold">投資</span></button>
             <button onClick={() => { setActiveTab('settings'); setSettingsPage(null); }} className={`flex flex-col items-center justify-center w-20 h-14 rounded-2xl transition-all duration-200 ${activeTab === 'settings' ? 'bg-gray-100 text-black' : 'text-gray-400 active:bg-gray-50'}`}><Settings className="w-6 h-6 mb-0.5" strokeWidth={2.5} /><span className="text-xs font-bold">設定</span></button>
