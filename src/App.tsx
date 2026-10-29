@@ -72,6 +72,8 @@ interface StatsData {
   baseCosts?: { [unit: string]: { cost: number; date: string } }; // 各計算單位的起始成本與平均投入日期
   liabilities?: Liability[];      // 負債清單
   receivableFrom?: string;        // 代墊改為「應收款」的起始月份 (YYYY-MM)，之前維持計入支出
+  emergencyGoalFrom?: string;     // 目前的預備金目標從哪個月份起生效 (YYYY-MM)
+  emergencyGoalPrev?: number;     // 生效月份之前使用的目標
 }
 
 interface NetWorthPoint {
@@ -836,6 +838,10 @@ export default function App() {
     let cumulativeInvestable = initialStats.available || 0; 
     let cumulativeSavings = initialStats.savings || 0;
     let runningEmergencyFund = initialStats.emergencyCurrent || 0; 
+    // 預備金目標只從修改的月份起生效，過去的月份維持舊目標，避免重新分配已經投資出去的結餘
+    const goalFrom = initialStats.emergencyGoalFrom || '0000-00';
+    const goalFor = (month: string) =>
+        month >= goalFrom ? (initialStats.emergencyGoal || 0) : (initialStats.emergencyGoalPrev ?? initialStats.emergencyGoal ?? 0);
     const fixedEmergencyGoal = initialStats.emergencyGoal || 0;
     const isAutoEmergency = initialStats.emergencyMode === 'auto';
     const emergencyMonths = initialStats.emergencyMonths || 6;
@@ -859,7 +865,7 @@ export default function App() {
         const recent = needHistory.filter(v => v > 0).slice(-NEED_LOOKBACK_MONTHS);
         const avgNeed = recent.length > 0 ? recent.reduce((s, v) => s + v, 0) / recent.length : 0;
         const autoGoal = Math.round(avgNeed * emergencyMonths);
-        const goal = isAutoEmergency && month >= autoFrom && avgNeed > 0 ? Math.max(fixedEmergencyGoal, autoGoal) : fixedEmergencyGoal;
+        const goal = isAutoEmergency && month >= autoFrom && avgNeed > 0 ? Math.max(goalFor(month), autoGoal) : goalFor(month);
         return { goal, avgNeed, sampleMonths: recent.length };
     };
 
@@ -1011,7 +1017,7 @@ export default function App() {
                 emergencyFund: initialStats.emergencyCurrent || 0,
                 divertedToEmergency: 0,
                 repaidDeficit: 0,
-                emergencyGoal: fixedEmergencyGoal,
+                emergencyGoal: goalFor(month),
                 avgNeed: 0,
                 needSampleMonths: 0,
                 advanceOutstanding: 0,
@@ -2748,7 +2754,19 @@ export default function App() {
               </CardContainer>
               <CardContainer className="divide-y divide-gray-100">
                 <InputRow label="起始金額" value={initialStats.emergencyCurrent || ''} onChange={v => handleStatChange('emergencyCurrent', v)} />
-                <InputRow label={isAutoEmergency ? '最低目標' : '目標'} value={initialStats.emergencyGoal || ''} onChange={v => handleStatChange('emergencyGoal', v)} />
+                <InputRow label={isAutoEmergency ? '最低目標' : '目標'} value={initialStats.emergencyGoal || ''} onChange={v => {
+                  if (!/^\d*$/.test(v)) return;
+                  const thisMonth = getLocalMonthString();
+                  setInitialStats(prev => {
+                    const next = { ...prev, emergencyGoal: v === '' ? 0 : Number(v) };
+                    // 新月份第一次修改：把舊目標留給過去的月份
+                    if (prev.emergencyGoalFrom !== thisMonth) { next.emergencyGoalPrev = prev.emergencyGoal || 0; next.emergencyGoalFrom = thisMonth; }
+                    return next;
+                  });
+                }} />
+                {initialStats.emergencyGoalFrom && initialStats.emergencyGoalFrom !== '0000-00' && (
+                  <InputRow label={`${initialStats.emergencyGoalFrom} 之前的目標`} value={initialStats.emergencyGoalPrev ?? ''} onChange={v => { if (/^\d*$/.test(v)) setInitialStats(prev => ({ ...prev, emergencyGoalPrev: v === '' ? 0 : Number(v) })); }} />
+                )}
                 {isAutoEmergency && <InputRow label="幾個月的需要支出" placeholder="6" value={initialStats.emergencyMonths || ''} onChange={v => handleStatChange('emergencyMonths', v)} />}
               </CardContainer>
               <SectionFooter>
@@ -3057,7 +3075,7 @@ export default function App() {
             <NavRow label="初始化所有資料" danger onClick={() => setResetModal(true)} />
           </CardContainer>
 
-          <p className="text-center text-xs text-gray-400">臨界財富 v10.5</p>
+          <p className="text-center text-xs text-gray-400">臨界財富 v10.6</p>
         </div>
     );
   };
