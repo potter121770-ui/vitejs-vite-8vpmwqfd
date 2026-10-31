@@ -956,8 +956,9 @@ export default function App() {
         }
         
         if (availableSurplus > 0) {
-            surplusForNextMonth = availableSurplus * 0.9;
-            currentMonthSavingsAddon = availableSurplus * 0.1;
+            // 取整數，避免 90%/10% 產生小數，畫面四捨五入後和實際可用金額對不上
+            surplusForNextMonth = Math.floor(availableSurplus * 0.9);
+            currentMonthSavingsAddon = availableSurplus - surplusForNextMonth;
             cumulativeSavings += currentMonthSavingsAddon;
         }
       }
@@ -1738,8 +1739,10 @@ export default function App() {
         }
     }
 
-    const currentSavings = effectiveSavingsLimit;
-    const currentEmergency = effectiveEmergencyLimit;
+    // 金額一律以整數比較：舊紀錄算出的額度可能帶小數，畫面上顯示的是四捨五入後的數字
+    effectivePoolLimit = Math.round(effectivePoolLimit);
+    const currentSavings = Math.round(effectiveSavingsLimit);
+    const currentEmergency = Math.round(effectiveEmergencyLimit);
     const savingsFloor = initialStats.savingsFloor || 0; 
     
     const isSavingsInsufficient = formData.fromSavings && (Number(formData.amount) > currentSavings);
@@ -3062,7 +3065,7 @@ export default function App() {
             <NavRow label="初始化所有資料" danger onClick={() => setResetModal(true)} />
           </CardContainer>
 
-          <p className="text-center text-xs text-gray-400">臨界財富 v10.7</p>
+          <p className="text-center text-xs text-gray-400">臨界財富 v10.8</p>
         </div>
     );
   };
