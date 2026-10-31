@@ -882,17 +882,18 @@ export default function App() {
       cumulativeSavings += data.adjustSavings;
       cumulativeSavings = cumulativeSavings + data.assetLiquidation + data.loanDisbursement - data.savingsExpense;
       
-      currentMonthMonthlyRemaining -= data.investedFromMonthly;
-      currentMonthCumulativeRemaining -= data.investedFromCumulative;
       
       cumulativeSavings += (data.transferToSavingsFromMonthly + data.transferToSavingsFromCumulative);
-      currentMonthMonthlyRemaining -= data.transferToSavingsFromMonthly;
-      currentMonthCumulativeRemaining -= data.transferToSavingsFromCumulative;
       currentMonthCumulativeRemaining += data.transferToInvestable;
       cumulativeSavings -= data.transferToInvestable;
       runningEmergencyFund += (data.transferInvestToEmergencyFromMonthly + data.transferInvestToEmergencyFromCumulative + data.transferSavingsToEmergency);
-      currentMonthMonthlyRemaining -= data.transferInvestToEmergencyFromMonthly;
-      currentMonthCumulativeRemaining -= data.transferInvestToEmergencyFromCumulative;
+      // 本月額度與累積未投資是同一個資金池：投資或轉出時先用本月額度，不夠再用累積的部分
+      const poolOutflow = data.investedFromMonthly + data.investedFromCumulative
+        + data.transferToSavingsFromMonthly + data.transferToSavingsFromCumulative
+        + data.transferInvestToEmergencyFromMonthly + data.transferInvestToEmergencyFromCumulative;
+      const fromMonthly = Math.min(poolOutflow, Math.max(0, currentMonthMonthlyRemaining));
+      currentMonthMonthlyRemaining -= fromMonthly;
+      currentMonthCumulativeRemaining -= (poolOutflow - fromMonthly);
       cumulativeSavings -= data.transferSavingsToEmergency;
 
       // 應收款：代墊從現金存款扣；還款先沖銷應收款（回到現金存款），超過的部分（舊制代墊的還款）才算收入
@@ -1713,8 +1714,7 @@ export default function App() {
     const formStats = stats.getMonthStats(formMonth);
     const { monthlyRemainingInvestable, cumulativeAddOnAvailable, savings, emergencyFund, emergencyGoal, assetTotals, assetQty } = formStats;
     
-    let effectiveMonthlyLimit = monthlyRemainingInvestable;
-    let effectiveCumulativeLimit = cumulativeAddOnAvailable;
+    let effectivePoolLimit = monthlyRemainingInvestable + cumulativeAddOnAvailable; // 本月額度 + 累積未投資，同一個資金池
     let effectiveSavingsLimit = savings;
     let effectiveEmergencyLimit = emergencyFund;
 
@@ -1722,19 +1722,16 @@ export default function App() {
     if (originalTrans) {
         const amt = originalTrans.amount;
         const origMonth = originalTrans.date.substring(0, 7);
-        const isSameMonth = origMonth === formMonth;      // 當月額度只在同月份才加回
         const isNotLater = origMonth <= formMonth;        // 累積型的池子只要原交易不晚於目前月份就加回
         if (originalTrans.type === 'expense') {
-            if (originalTrans.category === '投資' && !originalTrans.fromSavings && !originalTrans.fromEmergency) {
-                if (originalTrans.investSource === 'monthly' && isSameMonth) effectiveMonthlyLimit += amt;
-                else if (originalTrans.investSource === 'cumulative' && isNotLater) effectiveCumulativeLimit += amt;
+            if (originalTrans.category === '投資' && !originalTrans.fromSavings && !originalTrans.fromEmergency && isNotLater) {
+                effectivePoolLimit += amt;
             }
             if (originalTrans.fromSavings && isNotLater) effectiveSavingsLimit += amt;
             if (originalTrans.fromEmergency && isNotLater) effectiveEmergencyLimit += amt;
         } else if (originalTrans.type === 'transfer') {
-            if (originalTrans.transferDirection === 'to_savings' || originalTrans.transferDirection === 'invest_to_emergency') {
-                if (originalTrans.investSource === 'monthly' && isSameMonth) effectiveMonthlyLimit += amt;
-                else if (originalTrans.investSource === 'cumulative' && isNotLater) effectiveCumulativeLimit += amt;
+            if ((originalTrans.transferDirection === 'to_savings' || originalTrans.transferDirection === 'invest_to_emergency') && isNotLater) {
+                effectivePoolLimit += amt;
             } else if ((originalTrans.transferDirection === 'to_investable' || originalTrans.transferDirection === 'savings_to_emergency') && isNotLater) {
                 effectiveSavingsLimit += amt;
             }
@@ -1753,8 +1750,7 @@ export default function App() {
     if (isInvestForm) {
         const amount = Number(formData.amount);
         if (!formData.fromSavings) {
-            if (formData.investSource === 'monthly' && amount > effectiveMonthlyLimit) isInvestmentInsufficient = true;
-            else if (formData.investSource === 'cumulative' && amount > effectiveCumulativeLimit) isInvestmentInsufficient = true;
+            if (amount > effectivePoolLimit) isInvestmentInsufficient = true;
         }
     }
 
@@ -1780,8 +1776,7 @@ export default function App() {
     if (formData.type === 'transfer') {
         const amount = Number(formData.amount);
         if (formData.transferDirection === 'to_savings' || formData.transferDirection === 'invest_to_emergency') {
-            if (formData.investSource === 'monthly' && amount > effectiveMonthlyLimit) isTransferMonthlyInsufficient = true;
-            else if (formData.investSource === 'cumulative' && amount > effectiveCumulativeLimit) isTransferCumulativeInsufficient = true;
+            if (amount > effectivePoolLimit) isTransferMonthlyInsufficient = true;
         }
         if (formData.transferDirection === 'to_investable' || formData.transferDirection === 'savings_to_emergency') {
             if (amount > currentSavings) isTransferInsufficient = true;
@@ -1883,14 +1878,13 @@ export default function App() {
                     {(formData.transferDirection === 'to_savings' || formData.transferDirection === 'invest_to_emergency') && (
                         <div className="space-y-3 mt-2">
                             <p className="text-xs font-bold text-gray-400 mb-2">資金來源</p>
-                            <div onClick={() => setFormData({...formData, investSource: 'monthly'})} className={`flex items-center justify-between cursor-pointer p-2 rounded-lg transition-colors ${formData.investSource === 'monthly' ? 'bg-gray-100' : ''}`}>
-                                <div className="flex flex-col"><span className="text-base font-medium text-gray-900">當月額度</span><span className={`text-xs font-bold mt-0.5 ${effectiveMonthlyLimit < Number(formData.amount) ? 'text-red-400' : 'text-gray-500'}`}>餘額: ${formatMoney(effectiveMonthlyLimit)}</span></div>
-                                <div className="relative flex items-center"><input type="radio" checked={formData.investSource === 'monthly'} onChange={() => {}} className="w-5 h-5 text-black accent-black" /></div>
-                            </div>
-                            <div className="h-px bg-gray-50 w-full ml-2"></div>
-                            <div onClick={() => setFormData({...formData, investSource: 'cumulative'})} className={`flex items-center justify-between cursor-pointer p-2 rounded-lg transition-colors ${formData.investSource === 'cumulative' ? 'bg-gray-100' : ''}`}>
-                                <div className="flex flex-col"><span className="text-base font-medium text-gray-900">歷史資金</span><span className={`text-xs font-bold mt-0.5 ${effectiveCumulativeLimit < Number(formData.amount) ? 'text-red-400' : 'text-gray-800'}`}>餘額: ${formatMoney(effectiveCumulativeLimit)}</span></div>
-                                <div className="relative flex items-center"><input type="radio" checked={formData.investSource === 'cumulative'} onChange={() => {}} className="w-5 h-5 text-black accent-black" /></div>
+                            <div onClick={() => setFormData({...formData, investSource: 'monthly'})} className={`flex items-center justify-between cursor-pointer p-2 rounded-lg transition-colors ${true ? 'bg-gray-100' : ''}`}>
+                                <div className="flex flex-col">
+                                    <span className="text-base font-medium text-gray-900">可投資餘額</span>
+                                    <span className={`text-xs font-bold mt-0.5 ${effectivePoolLimit < Number(formData.amount) ? 'text-red-400' : 'text-gray-500'}`}>餘額: ${formatMoney(effectivePoolLimit)}</span>
+                                    <span className="text-xs text-gray-400 mt-0.5">本月額度 ${formatMoney(Math.max(0, monthlyRemainingInvestable))}・累積未投資 ${formatMoney(cumulativeAddOnAvailable)}</span>
+                                </div>
+                                <input type="radio" checked={true} onChange={() => {}} className="w-5 h-5 text-black accent-black" />
                             </div>
                         </div>
                     )}
@@ -1899,7 +1893,6 @@ export default function App() {
                         <p className="text-xs text-gray-500 px-2 -mt-2">保留底線 $ {formatMoney(savingsFloor)} | 可用 $ {formatMoney(Math.max(0, currentSavings - savingsFloor))}</p>
                     )}
                     {isTransferMonthlyInsufficient && <div className="flex items-center gap-2 px-2 text-red-500"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">餘額不足</span></div>}
-                    {isTransferCumulativeInsufficient && <div className="flex items-center gap-2 px-2 text-red-500"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">餘額不足</span></div>}
                     {isTransferInsufficient && <div className="flex items-center gap-2 px-2 text-red-500"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">餘額不足</span></div>}
                     {formData.transferDirection === 'to_investable' && isSavingsFloorBreached && !isTransferInsufficient && <div className="flex items-center gap-2 px-2 text-red-500"><AlertCircle className="w-4 h-4" /><span className="text-xs font-bold">觸及保留底線，操作鎖定</span></div>}
                 </div>
@@ -1907,17 +1900,14 @@ export default function App() {
                 <div className="p-5">
                     <p className="text-xs font-bold text-gray-400 mb-4">資金來源</p>
                     <div className="space-y-4">
-                        <div onClick={() => setFormData({...formData, investSource: 'monthly', fromSavings: false})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${!formData.fromSavings && formData.investSource === 'monthly' ? 'bg-gray-100' : ''}`}>
-                            <div className="flex flex-col"><span className="text-base font-medium text-gray-900">當月額度</span><span className={`text-xs font-bold mt-0.5 ${effectiveMonthlyLimit < 0 ? 'text-red-400' : 'text-gray-500'}`}>餘額: ${formatMoney(effectiveMonthlyLimit)}</span></div>
-                            <div className="relative flex items-center"><input type="radio" name="investSource" checked={!formData.fromSavings && formData.investSource === 'monthly'} onChange={() => {}} className="w-5 h-5 text-black accent-black" /></div>
-                        </div>
-                        
-                        <div className="h-px bg-gray-50 w-full ml-4"></div>
-                        
-                        <div onClick={() => setFormData({...formData, investSource: 'cumulative', fromSavings: false})} className={`flex items-center justify-between cursor-pointer group p-2 rounded-lg transition-colors ${!formData.fromSavings && formData.investSource === 'cumulative' ? 'bg-gray-100' : ''}`}>
-                             <div className="flex flex-col"><span className="text-base font-medium text-black">歷史資金</span><span className={`text-xs font-bold mt-0.5 ${effectiveCumulativeLimit < 0 ? 'text-red-400' : 'text-gray-800'}`}>餘額: ${formatMoney(effectiveCumulativeLimit)}</span></div>
-                            <input type="radio" name="investSource" checked={!formData.fromSavings && formData.investSource === 'cumulative'} onChange={() => {}} className="w-5 h-5 text-black accent-black" />
-                        </div>
+                        <div onClick={() => setFormData({...formData, investSource: 'monthly', fromSavings: false})} className={`flex items-center justify-between cursor-pointer p-2 rounded-lg transition-colors ${!formData.fromSavings ? 'bg-gray-100' : ''}`}>
+                                <div className="flex flex-col">
+                                    <span className="text-base font-medium text-gray-900">可投資餘額</span>
+                                    <span className={`text-xs font-bold mt-0.5 ${effectivePoolLimit < Number(formData.amount) ? 'text-red-400' : 'text-gray-500'}`}>餘額: ${formatMoney(effectivePoolLimit)}</span>
+                                    <span className="text-xs text-gray-400 mt-0.5">本月額度 ${formatMoney(Math.max(0, monthlyRemainingInvestable))}・累積未投資 ${formatMoney(cumulativeAddOnAvailable)}</span>
+                                </div>
+                                <input type="radio" name="investSource" checked={!formData.fromSavings} onChange={() => {}} className="w-5 h-5 text-black accent-black" />
+                            </div>
 
                         <div className="h-px bg-gray-50 w-full ml-4"></div>
 
@@ -2550,23 +2540,19 @@ export default function App() {
           </select>
       </div>
       <div>
-        <p className="text-sm text-gray-500 px-4 mb-1.5">本月投資額度</p>
+        <p className="text-sm text-gray-500 px-4 mb-1.5">投資額度</p>
         <CardContainer className="divide-y divide-gray-100">
           <div className="px-4 py-3 flex justify-between items-baseline">
-            <span className="text-base text-black">這個月可投資</span>
-            <span className="text-base font-bold tabular-nums">${formatMoney(stats.investment.monthlyMaxInvestable)}</span>
+            <span className="text-base text-black">可投資餘額</span>
+            <span className={`text-xl font-bold tabular-nums ${(stats.investment.monthlyRemainingInvestable + stats.investment.cumulativeAddOnAvailable) < 0 ? 'text-red-500' : 'text-black'}`}>${formatMoney(stats.investment.monthlyRemainingInvestable + stats.investment.cumulativeAddOnAvailable)}</span>
           </div>
           <div className="px-4 py-3 flex justify-between items-baseline">
-            <span className="text-base text-black">已投入</span>
+            <span className="text-base text-black">本月新增額度</span>
+            <span className="text-base tabular-nums text-gray-600">${formatMoney(stats.investment.monthlyMaxInvestable)}</span>
+          </div>
+          <div className="px-4 py-3 flex justify-between items-baseline">
+            <span className="text-base text-black">本月已投入</span>
             <span className="text-base tabular-nums text-gray-600">${formatMoney(stats.investment.actualInvested)}</span>
-          </div>
-          <div className="px-4 py-3 flex justify-between items-baseline">
-            <span className="text-base text-black">剩餘</span>
-            <span className={`text-xl font-bold tabular-nums ${stats.investment.monthlyRemainingInvestable < 0 ? 'text-red-500' : 'text-black'}`}>${formatMoney(stats.investment.monthlyRemainingInvestable)}</span>
-          </div>
-          <div className="px-4 py-3 flex justify-between items-baseline">
-            <span className="text-base text-black">累積未投資</span>
-            <span className="text-base tabular-nums text-gray-600">${formatMoney(stats.investment.cumulativeAddOnAvailable)}</span>
           </div>
           {stats.investment.accumulatedDeficit > 0 && (
             <div className="px-4 py-3 flex justify-between items-baseline">
@@ -2575,6 +2561,7 @@ export default function App() {
             </div>
           )}
         </CardContainer>
+        <p className="text-sm text-gray-500 px-4 mt-1.5 leading-relaxed">上個月結餘的 90% 會在月初加入可投資餘額；沒用完的會一直留著，不會過期。</p>
         {(stats.investment.divertedToEmergency > 0 || stats.investment.repaidDeficit > 0 || stats.investment.deficitDeductedFromCumulative > 0) && (
           <p className="text-sm text-gray-500 px-4 mt-1.5 leading-relaxed">
             {stats.investment.divertedToEmergency > 0 && `上月結餘先補預備金 $${formatMoney(stats.investment.divertedToEmergency)}。`}
@@ -3075,7 +3062,7 @@ export default function App() {
             <NavRow label="初始化所有資料" danger onClick={() => setResetModal(true)} />
           </CardContainer>
 
-          <p className="text-center text-xs text-gray-400">臨界財富 v10.6</p>
+          <p className="text-center text-xs text-gray-400">臨界財富 v10.7</p>
         </div>
     );
   };
