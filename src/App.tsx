@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart, ShieldAlert, Tag, ShoppingBag, Briefcase, Database, Search } from 'lucide-react';
+import { Plus, PieChart, TrendingUp, DollarSign, List, Settings, AlertCircle, Coins, Edit3, Calendar, Info, CreditCard, Calculator, Trash2, ChevronLeft, Save, ShieldCheck, CheckCircle, Coffee, Shield, Delete, X, Eye, EyeOff, Link as LinkIcon, PiggyBank, RefreshCcw, Lock, Download, AlertTriangle, Activity, Filter, Heart, ShieldAlert, Tag, ShoppingBag, Briefcase, Database, Search, ChevronUp, ChevronDown } from 'lucide-react';
 import { 
   ResponsiveContainer, PieChart as RePieChart, Pie, Cell, Tooltip as RechartsTooltip,
   LineChart, Line, XAxis, YAxis
@@ -50,6 +50,7 @@ interface MarketData {
   volShort: { [key: string]: number };
   corr: { [key: string]: number };
   fetchedAt: string;
+  bad?: string[];          // 試算表回傳錯誤值（#N/A 等）的欄位
 }
 
 interface Budgets {
@@ -69,6 +70,7 @@ interface StatsData {
   priceCsvUrl?: string;           // Google 試算表發布的 CSV 網址
   stressCrypto?: number;          // 壓力測試：加密貨幣跌幅 (%)
   stressEquity?: number;          // 壓力測試：股票跌幅 (%)
+  riskTarget?: number;            // 目標風險：相當於幾倍的基準股票 (VT)
   emergencyAutoFrom?: string;     // 自動預備金從哪個月份開始生效 (YYYY-MM)，之前的月份維持固定目標
   combineCrypto?: boolean;        // 加密貨幣合併計算成本與損益（預設 true）
   baseCosts?: { [unit: string]: { cost: number; date: string } }; // 各計算單位的起始成本與平均投入日期
@@ -254,19 +256,38 @@ const EMPTY_MARKET: MarketData = { prices: {}, volLong: {}, volShort: {}, corr: 
 
 // 解析試算表 Export 的兩欄 CSV：price_X / vol_long_X / vol_short_X / corr_A_B
 const parseMarketCsv = (text: string): MarketData => {
-  const data: MarketData = { prices: {}, volLong: {}, volShort: {}, corr: {}, fetchedAt: new Date().toISOString() };
+  const data: MarketData = { prices: {}, volLong: {}, volShort: {}, corr: {}, fetchedAt: new Date().toISOString(), bad: [] };
   text.split(/\r?\n/).forEach(line => {
-    const [rawKey, rawVal] = line.split(',');
-    if (!rawKey || rawVal === undefined) return;
-    const key = rawKey.trim().replace(/^"|"$/g, '');
-    const value = Number(rawVal.trim().replace(/^"|"$/g, '').replace(/%$/, ''));
-    if (!isFinite(value)) return;
+    // 第一欄是 key，其餘是值（值可能被引號包住，裡面可能有逗號）
+    const m = line.match(/^\s*"?([^",]+)"?\s*,\s*(.*)$/);
+    if (!m) return;
+    const key = m[1].trim();
+    if (!/^(price_|vol_long_|vol_short_|corr_)/.test(key)) return;
+    let raw = m[2].trim().replace(/^"|"$/g, '').trim();
+    const isPct = raw.endsWith('%');
+    raw = raw.replace(/%$/, '');
+    if (!raw.includes('.') && /^-?\d+,\d+$/.test(raw)) raw = raw.replace(',', '.'); // 小數點是逗號的地區格式
+    else raw = raw.replace(/,/g, '');                                                  // 千分位
+    let value = Number(raw);
+    if (raw === '' || !isFinite(value)) { data.bad!.push(key); return; }
+    if (isPct) value /= 100;
     if (key.startsWith('price_')) data.prices[key.slice(6)] = value;
-    else if (key.startsWith('vol_long_')) data.volLong[key.slice(9)] = value;
-    else if (key.startsWith('vol_short_')) data.volShort[key.slice(10)] = value;
+    else if (key.startsWith('vol_long_')) data.volLong[key.slice(9)] = value > 3 ? value / 100 : value;
+    else if (key.startsWith('vol_short_')) data.volShort[key.slice(10)] = value > 3 ? value / 100 : value;
     else if (key.startsWith('corr_')) data.corr[key.slice(5)] = value;
   });
   return data;
+};
+
+// 試算表沒有資料時使用的長期估計值（年化、台幣計價）
+const DEFAULT_VOL: { [key: string]: number } = { BTC: 0.6, ETH: 0.75, VT: 0.15, '00631L': 0.4 };
+const defaultVolFor = (a: Asset) =>
+  DEFAULT_VOL[a.name] ?? (a.kind === 'cash' ? 0 : a.kind === 'crypto' ? 0.7 : a.kind === 'equity' ? 0.18 * (a.leverage || 1) : 0.2);
+const defaultCorrFor = (a: Asset, b: Asset) => {
+  if (a.kind === 'cash' || b.kind === 'cash') return 0;
+  if (a.kind === 'crypto' && b.kind === 'crypto') return 0.8;
+  if (a.kind === 'equity' && b.kind === 'equity') return 0.75;
+  return 0.35;
 };
 
 const getCorr = (market: MarketData, a: string, b: string) => {
@@ -439,6 +460,7 @@ export default function App() {
   const [marketStatus, setMarketStatus] = useState<'idle' | 'loading' | 'error'>('idle');
   const [marketError, setMarketError] = useState('');
   const [riskWindow, setRiskWindow] = useState<'long' | 'short'>('long');
+  const [riskDetailOpen, setRiskDetailOpen] = useState(false);
 
   const [storageUsage, setStorageUsage] = useState(0);
 
@@ -461,7 +483,10 @@ export default function App() {
       const parsed = parseMarketCsv(await res.text());
       if (Object.keys(parsed.prices).length === 0) throw new Error('CSV 裡找不到任何 price_ 開頭的資料');
       setMarket(parsed);
-      setMarketStatus('idle');
+      if (Object.keys(parsed.volLong).length === 0) {
+        setMarketStatus('error');
+        setMarketError(`價格已更新，但沒有波動度資料${parsed.bad && parsed.bad.length ? `（錯誤值：${parsed.bad.slice(0, 3).join('、')}）` : ''}`);
+      } else setMarketStatus('idle');
     } catch (e: any) {
       setMarketStatus('error');
       setMarketError(`更新失敗：${e?.message || '未知錯誤'}`);
@@ -1171,8 +1196,15 @@ export default function App() {
         const from = t.fromAsset!, to = t.asset!;
         const uFrom = unitOf(from), uTo = unitOf(to);
         const frac = fractionOf(from, t.amount, t.fromQuantity);
-        if (uFrom !== uTo) {
-          // 成本跟著轉過去：不會因為轉換就產生或洗掉損益
+        if (uFrom !== uTo && (isCash(from) || isCash(to))) {
+          // 換成投資現金（或用投資現金買進）＝ 一次賣出 / 買進：實現損益，現金的成本就是金額
+          const removed = takeCost(from, frac);
+          realized[uFrom] += t.amount - removed;
+          cost[uTo] += t.amount;
+          flows[uFrom].push({ date: t.date, amount: t.amount });
+          flows[uTo].push({ date: t.date, amount: -t.amount });
+        } else if (uFrom !== uTo) {
+          // 標的之間互轉：成本跟著轉過去，不會因為轉換就產生或洗掉損益
           const moved = takeCost(from, frac);
           cost[uTo] += moved;
           flows[uFrom].push({ date: t.date, amount: t.amount });
@@ -1195,7 +1227,9 @@ export default function App() {
         unrealized: value - c,
         pct: c > 0 ? (value - c) / c : null,
         realized: realized[u],
-        xirr: xirr([...flows[u], { date: today, amount: value }]),
+        // 持有不到 30 天的年化報酬會被放大到沒有意義，所以不顯示
+        xirr: flows[u].length > 0 && (new Date(today).getTime() - new Date(flows[u].reduce((m, f) => (f.date < m ? f.date : m), today)).getTime()) / 86400000 >= 30
+          ? xirr([...flows[u], { date: today, amount: value }]) : null,
         missingCost: !unitIsCash && value > 0 && !(baseCosts[u] && baseCosts[u].cost) && flows[u].length === 0,
       };
     }).filter(r => r.value > 0 || r.cost > 0 || r.realized !== 0);
@@ -2447,113 +2481,216 @@ export default function App() {
     );
   };
 
+  // 風險模型：試算表的波動度與相關係數，缺的用長期估計值補上
+  const buildRiskModel = (window: 'long' | 'short') => {
+    const usedDefault: string[] = [];
+    const note = (n: string) => { if (!usedDefault.includes(n)) usedDefault.push(n); };
+    const vol = (a: Asset) => {
+      if (a.kind === 'cash') return 0;
+      const v = (window === 'long' ? market.volLong : market.volShort)[a.name] ?? market.volLong[a.name];
+      if (v !== undefined && v > 0) return v;
+      note(a.name);
+      return defaultVolFor(a);
+    };
+    const corr = (a: Asset, b: Asset) => {
+      if (a.name === b.name) return 1;
+      if (a.kind === 'cash' || b.kind === 'cash') return 0;
+      const c = getCorr(market, a.name, b.name);
+      if (c !== null) return c;
+      note(`${a.name}/${b.name}`);
+      return defaultCorrFor(a, b);
+    };
+    const analyse = (vals: { [n: string]: number }) => {
+      const list = assets.filter(a => (vals[a.name] || 0) > 0);
+      const total = list.reduce((s, a) => s + vals[a.name], 0);
+      if (total <= 0) return { sigma: 0, rows: [] as { name: string; weight: number; risk: number; vol: number }[] };
+      const w = list.map(a => vals[a.name] / total);
+      const covW = list.map((a, i) => list.reduce((s, b, j) => s + corr(a, b) * vol(a) * vol(b) * w[j], 0));
+      const variance = Math.max(0, w.reduce((s, wi, i) => s + wi * covW[i], 0));
+      return {
+        sigma: Math.sqrt(variance),
+        rows: list.map((a, i) => ({ name: a.name, weight: w[i], vol: vol(a), risk: variance > 0 ? (w[i] * covW[i]) / variance : 0 })),
+      };
+    };
+    return { vol, analyse, usedDefault };
+  };
+
   const renderRiskCard = () => {
     const { values } = getAssetValues(stats.investment.assetTotals, stats.investment.assetQty);
-    const items = assets.map(a => ({ name: a.name, kind: a.kind, leverage: a.leverage || 1, value: values[a.name] || 0 })).filter(i => i.value > 0);
-    const total = items.reduce((s, i) => s + i.value, 0);
+    const vals: { [n: string]: number } = {};
+    assets.forEach(a => { vals[a.name] = Math.max(0, values[a.name] || 0); });
+    const total = assets.reduce((s, a) => s + vals[a.name], 0);
     if (total <= 0) return null;
 
-    // 1. 實際曝險（把槓桿算進去）
-    // 現金不是市場曝險，所以不算進曝險，只算進淨值
-    const exposureTotal = items.filter(i => i.kind !== 'cash').reduce((s, i) => s + i.value * i.leverage, 0);
-    const cashValue = items.filter(i => i.kind === 'cash').reduce((s, i) => s + i.value, 0);
-    const exposureByKind = (['crypto', 'equity', 'other'] as AssetKind[])
-      .map(k => ({ kind: k, value: items.filter(i => i.kind === k).reduce((s, i) => s + i.value * i.leverage, 0) }))
-      .filter(k => k.value > 0);
+    const model = buildRiskModel(riskWindow);
+    const now = model.analyse(vals);
+    const sigma = now.sigma;
 
-    // 2. 風險貢獻
-    const cashNames = new Set(assets.filter(a => a.kind === 'cash').map(a => a.name));
-    const risk = computeRisk(items, market, riskWindow, cashNames);
-    const hasRiskData = risk.contributions.length > 0;
-    const cryptoNames = new Set(assets.filter(a => a.kind === 'crypto').map(a => a.name));
-    const cryptoRisk = risk.contributions.filter(c => cryptoNames.has(c.name)).reduce((s, c) => s + c.risk, 0);
-    const cryptoWeight = risk.contributions.filter(c => cryptoNames.has(c.name)).reduce((s, c) => s + c.weight, 0);
+    // 基準：槓桿最低的股票（VT）；加槓桿的工具：槓桿最高的股票（00631L）
+    const equities = assets.filter(a => a.kind === 'equity');
+    const base = [...equities].sort((a, b) => (a.leverage || 1) - (b.leverage || 1))[0];
+    const levAsset = [...equities].filter(a => (a.leverage || 1) > 1).sort((a, b) => (b.leverage || 1) - (a.leverage || 1))[0];
+    const baseVol = base ? model.vol(base) : 0.15;
+    const baseName = base ? base.name : '全球股市';
+    const k = initialStats.riskTarget ?? 1.5;
+    const target = k * baseVol;
+    const ratio = baseVol > 0 ? sigma / baseVol : 0;
 
-    // 3. 壓力測試
+    const monthly = stats.investment.monthlyMaxInvestable;
+    const avail = Math.max(0, stats.investment.monthlyRemainingInvestable + stats.investment.cumulativeAddOnAvailable);
+    const sigmaWith = (adds: { [n: string]: number }) => {
+      const next = { ...vals };
+      Object.entries(adds).forEach(([n, x]) => { next[n] = Math.max(0, (next[n] || 0) + x); });
+      return model.analyse(next).sigma;
+    };
+    // 二分法：找最小的 x 讓 f(x) 降到目標以下（f 隨 x 遞減）
+    const solveDown = (f: (x: number) => number, hi: number) => {
+      if (f(hi) > target) return null;
+      let lo = 0;
+      for (let i = 0; i < 50; i++) { const mid = (lo + hi) / 2; if (f(mid) > target) lo = mid; else hi = mid; }
+      return hi;
+    };
+
+    const cryptoAssets = assets.filter(a => a.kind === 'crypto' && vals[a.name] > 0);
+    const cryptoTotal = cryptoAssets.reduce((s, a) => s + vals[a.name], 0);
+    const band = 0.1;
+    let action = '';
+    const detail: string[] = [];
+    let status: 'high' | 'ok' | 'low' = 'ok';
+
+    if (!base) {
+      action = '先到設定加入一檔股票 ETF 當作基準';
+    } else if (sigma > target * (1 + band)) {
+      status = 'high';
+      action = `新資金全部買 ${base.name}`;
+      const x = solveDown(v => sigmaWith({ [base.name]: v }), total * 50);
+      if (x !== null) detail.push(`再投入約 $${formatMoney(Math.ceil(x / 1000) * 1000)} 會降到目標${monthly > 0 ? `（約 ${Math.ceil(x / monthly)} 個月的新增額度）` : ''}`);
+      if (levAsset && vals[levAsset.name] > 0) detail.push(`暫停加碼 ${levAsset.name}`);
+      if (cryptoTotal > 0) {
+        const y = solveDown(v => {
+          const adds: { [n: string]: number } = { [base.name]: v };
+          cryptoAssets.forEach(a => { adds[a.name] = -v * vals[a.name] / cryptoTotal; });
+          return sigmaWith(adds);
+        }, cryptoTotal);
+        if (y !== null) detail.push(`若要馬上達標：把 $${formatMoney(Math.ceil(y / 1000) * 1000)} 加密貨幣換成 ${base.name}`);
+      }
+    } else {
+      status = sigma < target * (1 - band) ? 'low' : 'ok';
+      const amount = avail > 0 ? avail : monthly;
+      if (levAsset && amount > 0) {
+        // 找 00631L 的比例 f，讓投入後的風險最接近目標（f 越大風險越高）
+        const at = (f: number) => sigmaWith({ [levAsset.name]: amount * f, [base.name]: amount * (1 - f) });
+        let f: number;
+        if (at(1) <= target) f = 1;
+        else if (at(0) >= target) f = 0;
+        else { let lo = 0, hi = 1; for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (at(mid) < target) lo = mid; else hi = mid; } f = lo; }
+        const levAmt = Math.round(amount * f / 100) * 100;
+        const baseAmt = Math.max(0, Math.round(amount) - levAmt);
+        action = levAmt === 0 ? `新資金全部買 ${base.name}` : baseAmt === 0 ? `新資金全部買 ${levAsset.name}` : `${levAsset.name} $${formatMoney(levAmt)}、${base.name} $${formatMoney(baseAmt)}`;
+        detail.push(`以可投資餘額 $${formatMoney(amount)} 計算`);
+      } else {
+        action = status === 'low' ? `可以提高曝險${levAsset ? '' : '（加入槓桿 ETF 後會給出比例）'}` : `新資金照目前比例投入`;
+      }
+    }
+
+    // 金額化：對數常態、不計報酬率
+    const downNormal = total * (1 - Math.exp(-sigma));
+    const upNormal = total * (Math.exp(sigma) - 1);
+    const badYear = total * (1 - Math.exp(-1.65 * sigma));
     const shockCrypto = (initialStats.stressCrypto ?? 70) / 100;
     const shockEquity = (initialStats.stressEquity ?? 35) / 100;
-    const stressLoss = items.reduce((s, i) => {
-      const base = i.kind === 'crypto' ? shockCrypto : i.kind === 'equity' ? shockEquity : 0;
-      return s + i.value * Math.min(1, base * i.leverage);
+    const crash = assets.reduce((s, a) => {
+      const shock = a.kind === 'crypto' ? shockCrypto : a.kind === 'equity' ? shockEquity : 0;
+      return s + vals[a.name] * Math.min(1, shock * (a.leverage || 1));
     }, 0);
+    const exposure = assets.filter(a => a.kind !== 'cash').reduce((s, a) => s + vals[a.name] * (a.leverage || 1), 0);
 
     const pct = (v: number) => `${(v * 100).toFixed(0)}%`;
+    const scaleMax = Math.max(4, Math.ceil(Math.max(ratio, k) + 0.5));
+    const barColor = status === 'high' ? '#FF3B30' : status === 'low' ? '#8E8E93' : '#000';
+    const statusText = status === 'high' ? '高於目標' : status === 'low' ? '低於目標' : '在目標內';
+    const monthsOf = (v: number) => (monthly > 0 ? `・約 ${(v / monthly).toFixed(1)} 個月額度` : '');
 
     return (
       <CardContainer className="p-5">
-        <div className="flex items-center gap-2 mb-4"><Activity className="w-4 h-4 text-black" /><h3 className="text-base font-bold text-gray-900">風險分析</h3></div>
+        <div className="flex items-center gap-2 mb-4"><Activity className="w-4 h-4 text-black" /><h3 className="text-base font-bold text-gray-900">風險</h3></div>
 
-        <div className="mb-5">
-          <div className="flex items-baseline justify-between mb-2">
-            <span className="text-xs font-bold text-gray-600">實際曝險（含槓桿）</span>
-            <span className="text-base font-bold tabular-nums">${formatMoney(exposureTotal)} <span className="text-xs font-medium text-gray-400">/ 淨值 ${formatMoney(total)}</span></span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {exposureByKind.map(k => (
-              <span key={k.kind} className="text-xs font-bold bg-gray-100 text-gray-700 px-2 py-1 rounded-lg">{ASSET_KIND_LABEL[k.kind]} {exposureTotal > 0 ? pct(k.value / exposureTotal) : '0%'}</span>
-            ))}
-          </div>
-          <p className="text-xs text-gray-500 mt-2">
-            曝險是淨值的 <b>{(exposureTotal / total).toFixed(2)} 倍</b>
-
-          </p>
+        <div className="flex items-baseline justify-between">
+          <span className="text-3xl font-bold tabular-nums">{ratio.toFixed(1)} 倍 <span className="text-base font-bold text-gray-500">{baseName}</span></span>
+          <span className={`text-sm font-bold ${status === 'high' ? 'text-red-500' : 'text-gray-500'}`}>{statusText}</span>
+        </div>
+        <div className="relative h-2 bg-gray-100 rounded-full mt-3 mb-1">
+          <div className="h-full rounded-full" style={{ width: `${Math.min(ratio / scaleMax, 1) * 100}%`, backgroundColor: barColor }}></div>
+          <div className="absolute -top-1 w-0.5 h-4 bg-gray-500" style={{ left: `${(k / scaleMax) * 100}%` }}></div>
+        </div>
+        <div className="flex justify-between text-xs text-gray-400 tabular-nums">
+          <span>年化波動 {pct(sigma)}</span><span>目標 {k} 倍</span>
         </div>
 
-        <div className="mb-5 pt-4 border-t border-gray-100">
-          <div className="flex items-center justify-between mb-3">
-            <span className="text-xs font-bold text-gray-600">風險貢獻</span>
-            <div className="flex bg-gray-100 p-0.5 rounded-lg">
-              <button onClick={() => setRiskWindow('long')} className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${riskWindow === 'long' ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}>長期 3 年</button>
-              <button onClick={() => setRiskWindow('short')} className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${riskWindow === 'short' ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}>短期半年</button>
-            </div>
+        <div className="mt-4 rounded-xl p-4 bg-black text-white">
+          <p className="text-base font-bold">{action}</p>
+          {detail.map(d => <p key={d} className="text-sm text-gray-300 mt-1">{d}</p>)}
+        </div>
+
+        <div className="mt-4 divide-y divide-gray-100">
+          <div className="py-2.5 flex justify-between items-baseline">
+            <span className="text-sm text-gray-600">一般年份</span>
+            <span className="text-sm font-bold tabular-nums"><span className="text-red-500">−${formatMoney(downNormal)}</span> ~ <span className="text-green-600">+${formatMoney(upNormal)}</span></span>
           </div>
-          {hasRiskData ? (
-            <>
-              <div className="flex items-baseline justify-between mb-3">
-                <span className="text-xs text-gray-500">組合年化波動</span>
-                <span className="text-lg font-bold tabular-nums">{pct(risk.portfolioVol)}</span>
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center text-xs text-gray-400">
-                  <span className="flex-1">標的</span><span className="w-14 text-right">資金</span><span className="w-14 text-right">風險</span>
-                </div>
-                {risk.contributions.map(c => (
-                  <div key={c.name} className="flex items-center">
-                    <span className="flex-1 text-base text-black">{c.name} <span className="text-xs text-gray-400">波動 {pct(c.vol)}</span></span>
-                    <span className="w-14 text-right text-base tabular-nums text-gray-500">{pct(c.weight)}</span>
-                    <span className={`w-14 text-right text-base font-bold tabular-nums ${c.risk > c.weight + 0.05 ? 'text-red-500' : 'text-black'}`}>{pct(c.risk)}</span>
-                  </div>
+          <div className="py-2.5 flex justify-between items-baseline">
+            <span className="text-sm text-gray-600">20 年一次的壞年</span>
+            <span className="text-sm font-bold tabular-nums text-red-500">−${formatMoney(badYear)}<span className="text-xs font-medium text-gray-400">{monthsOf(badYear)}</span></span>
+          </div>
+          <div className="py-2.5 flex justify-between items-baseline">
+            <span className="text-sm text-gray-600">崩盤（幣 −{pct(shockCrypto)}、股 −{pct(shockEquity)}）</span>
+            <span className="text-sm font-bold tabular-nums text-red-500">−${formatMoney(crash)}<span className="text-xs font-medium text-gray-400">{monthsOf(crash)}</span></span>
+          </div>
+        </div>
+
+        <button onClick={() => setRiskDetailOpen(o => !o)} className="mt-3 w-full flex items-center justify-between text-sm font-bold text-gray-500">
+          <span>細節</span>{riskDetailOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
+
+        {riskDetailOpen && (
+          <div className="mt-3 space-y-4">
+            <div>
+              <p className="text-xs font-bold text-gray-600 mb-2">目標（幾倍 {baseName} 的風險）</p>
+              <div className="flex bg-gray-100 p-0.5 rounded-lg">
+                {[1, 1.5, 2, 2.5].map(v => (
+                  <button key={v} onClick={() => setInitialStats(prev => ({ ...prev, riskTarget: v }))}
+                    className={`flex-1 py-1.5 text-xs font-bold rounded-md transition ${k === v ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}>{v} 倍</button>
                 ))}
               </div>
-              {cryptoWeight > 0 && (
-                <p className="text-xs text-gray-600 mt-3 bg-gray-50 rounded-lg px-3 py-2">加密貨幣佔資金 <b>{pct(cryptoWeight)}</b>，貢獻組合風險 <b>{pct(cryptoRisk)}</b>。</p>
-              )}
-              {(risk.missing.length > 0 || risk.missingCorr) && (
-                <p className="text-xs text-red-500 mt-2">
-                  {risk.missing.length > 0 && `${risk.missing.join('、')} 沒有波動度資料，未納入計算。`}
-                  {risk.missingCorr && '部分相關係數缺漏，以 0 計算。'}
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="text-sm text-gray-400">尚無資料</p>
-          )}
-        </div>
-
-        <div className="pt-4 border-t border-gray-100">
-          <div className="flex items-baseline justify-between mb-2">
-            <span className="text-xs font-bold text-gray-600">壓力測試</span>
-            <span className="text-xs text-gray-400">加密貨幣 −{initialStats.stressCrypto ?? 70}%、股票 −{initialStats.stressEquity ?? 35}%（槓桿加倍）</span>
+            </div>
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-gray-600">風險來源</span>
+                <div className="flex bg-gray-100 p-0.5 rounded-lg">
+                  <button onClick={() => setRiskWindow('long')} className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${riskWindow === 'long' ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}>長期 3 年</button>
+                  <button onClick={() => setRiskWindow('short')} className={`px-2.5 py-1 text-xs font-bold rounded-md transition ${riskWindow === 'short' ? 'bg-white shadow-sm text-black' : 'text-gray-400'}`}>短期半年</button>
+                </div>
+              </div>
+              <div className="flex items-center text-xs text-gray-400 mb-1">
+                <span className="flex-1">標的</span><span className="w-14 text-right">波動</span><span className="w-14 text-right">資金</span><span className="w-14 text-right">風險</span>
+              </div>
+              {now.rows.map(c => (
+                <div key={c.name} className="flex items-center py-0.5">
+                  <span className="flex-1 text-sm text-black">{c.name}</span>
+                  <span className="w-14 text-right text-sm tabular-nums text-gray-400">{pct(c.vol)}</span>
+                  <span className="w-14 text-right text-sm tabular-nums text-gray-500">{pct(c.weight)}</span>
+                  <span className={`w-14 text-right text-sm font-bold tabular-nums ${c.risk > c.weight + 0.05 ? 'text-red-500' : 'text-black'}`}>{pct(c.risk)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-between items-baseline">
+              <span className="text-xs font-bold text-gray-600">實際曝險（含槓桿）</span>
+              <span className="text-sm font-bold tabular-nums">{(exposure / total).toFixed(2)} 倍・${formatMoney(exposure)}</span>
+            </div>
+            {model.usedDefault.length > 0 && (
+              <p className="text-xs text-gray-400">預設值：{model.usedDefault.slice(0, 6).join('、')}{model.usedDefault.length > 6 ? ' 等' : ''}</p>
+            )}
           </div>
-          <div className="flex items-baseline justify-between">
-            <span className="text-sm text-gray-500">可能損失</span>
-            <span className="text-2xl font-bold tabular-nums text-red-500">−${formatMoney(stressLoss)}</span>
-          </div>
-          <div className="flex items-baseline justify-between mt-1">
-            <span className="text-sm text-gray-500">剩下</span>
-            <span className="text-sm font-bold tabular-nums">${formatMoney(total - stressLoss)}（{pct(stressLoss / total)} 跌幅）</span>
-          </div>
-        </div>
+        )}
       </CardContainer>
     );
   };
