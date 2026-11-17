@@ -50,6 +50,7 @@ interface MarketData {
   volShort: { [key: string]: number };
   corr: { [key: string]: number };
   fetchedAt: string;
+  volFetchedAt?: string;   // 最後一次成功讀到波動度的時間
   bad?: string[];          // 試算表回傳錯誤值（#N/A 等）的欄位
 }
 
@@ -482,11 +483,18 @@ export default function App() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const parsed = parseMarketCsv(await res.text());
       if (Object.keys(parsed.prices).length === 0) throw new Error('CSV 裡找不到任何 price_ 開頭的資料');
-      setMarket(parsed);
-      if (Object.keys(parsed.volLong).length === 0) {
-        setMarketStatus('error');
-        setMarketError(`價格已更新，但沒有波動度資料${parsed.bad && parsed.bad.length ? `（錯誤值：${parsed.bad.slice(0, 3).join('、')}）` : ''}`);
-      } else setMarketStatus('idle');
+      // 波動度和相關係數來自歷史價格，試算表沒被打開時常常回傳 #N/A。
+      // 這次沒讀到的，就沿用上一次成功讀到的數字（長期波動度變化很慢）。
+      const gotVol = Object.keys(parsed.volLong).length > 0;
+      setMarket(prev => ({
+        ...parsed,
+        volLong: { ...prev.volLong, ...parsed.volLong },
+        volShort: { ...prev.volShort, ...parsed.volShort },
+        corr: { ...prev.corr, ...parsed.corr },
+        volFetchedAt: gotVol ? parsed.fetchedAt : prev.volFetchedAt,
+      }));
+      setMarketStatus('idle');
+      if (!gotVol) setMarketError('價格已更新；波動度沿用上次的資料');
     } catch (e: any) {
       setMarketStatus('error');
       setMarketError(`更新失敗：${e?.message || '未知錯誤'}`);
@@ -2406,7 +2414,7 @@ export default function App() {
         <div className="min-w-0">
           <p className="text-sm font-bold text-gray-900">市場資料</p>
           <p className={`text-xs mt-0.5 truncate ${marketStatus === 'error' ? 'text-red-500 font-bold' : 'text-gray-400'}`}>
-            {marketStatus === 'error' ? marketError : fetchedAt ? `上次更新 ${fetchedAt.toLocaleString()}` : '尚未更新，按右邊按鈕抓取價格與波動度'}
+            {marketStatus === 'error' ? marketError : fetchedAt ? `上次更新 ${fetchedAt.toLocaleString()}${market.volFetchedAt && market.volFetchedAt !== market.fetchedAt ? `・波動度 ${new Date(market.volFetchedAt).toLocaleDateString()}` : ''}` : '尚未更新，按右邊按鈕抓取價格與波動度'}
           </p>
         </div>
         <button onClick={refreshMarket} disabled={marketStatus === 'loading'}
